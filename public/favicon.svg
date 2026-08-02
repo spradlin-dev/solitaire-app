@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Back Card -->
+  <rect x="35" y="15" width="50" height="70" rx="8" fill="#e0e0e0" stroke="#2c3e50" stroke-width="4" transform="rotate(15, 60, 50)" />
+  
+  <!-- Front Card -->
+  <rect x="15" y="15" width="50" height="70" rx="8" fill="#ffffff" stroke="#2c3e50" stroke-width="4" />
+  
+  <!-- Red Heart Suit -->
+  <path d="M40,60 C40,60 25,45 25,35 C25,25 35,25 40,30 C45,25 55,25 55,35 C55,45 40,60 40,60 Z" fill="#e74c3c" />
+</svg>

@@ -33,6 +33,12 @@ jobs:
         run: |
           test -f dist/index.html || { echo "::error::dist/index.html missing"; exit 1; }
           grep -q "/$REPO_NAME/assets/" dist/index.html || { echo "::error::dist/index.html does not reference /$REPO_NAME/assets/ - check base in vite.config.ts"; exit 1; }
+          test -f dist/manifest.webmanifest || { echo "::error::dist/manifest.webmanifest missing - PWA plugin did not run"; exit 1; }
+          grep -q "\"start_url\":\"/$REPO_NAME/\"" dist/manifest.webmanifest || { echo "::error::manifest start_url is not /$REPO_NAME/ - an installed app would launch at the wrong path"; exit 1; }
+          test -f dist/sw.js || { echo "::error::dist/sw.js missing - service worker was not generated"; exit 1; }
+          grep -q "manifest.webmanifest" dist/index.html || { echo "::error::dist/index.html does not link the web manifest"; exit 1; }
+          grep -q 'url:"index.html"' dist/sw.js || { echo "::error::dist/sw.js does not precache index.html - offline navigation would 404"; exit 1; }
+          test "$(grep -o 'url:"assets/[^"]*\.svg"' dist/sw.js | wc -l)" -ge 52 || { echo "::error::dist/sw.js precaches fewer than 52 card faces - cards would be missing offline (oversized or excluded assets?)"; exit 1; }
       - name: Upload the site as a Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useRegisterSW } from 'virtual:pwa-register/react'
 import { TableCanvas } from './ui/TableCanvas.tsx'
 import type { TableScene } from './ui/scene.ts'
 import type { SceneHandlers } from './ui/scene.ts'
@@ -10,6 +11,7 @@ import type { ModeStats } from './stats.ts'
 import { loadSettings, saveSettings } from './settings.ts'
 import { chooseBoot } from './boot.ts'
 import { formatDealFragment } from './dealLink.ts'
+import { scheduleSwUpdateChecks } from './pwaUpdate.ts'
 
 // The module-level bootstrap below runs once per page; a hot update would
 // re-run it and orphan a live store, so reload outright (same rule as
@@ -33,6 +35,17 @@ function randomSeed(): number {
 // boot sequence so a boot that starts a new deal immediately overwrites
 // the old blob — leaving it behind would let an already-loss-recorded deal
 // resurrect on the next load and record a second loss.
+// Durable storage protects a long-lived save from eviction; requested only
+// once a deal is actually played, never on a bare visit (DESIGN.md
+// section 6). Best-effort: browsers routinely deny until the app is
+// installed or trusted, and that is fine.
+let persistRequested = false
+function requestDurableStorageOnce(played: boolean): void {
+  if (!played || persistRequested) return
+  persistRequested = true
+  navigator.storage?.persist?.().catch(() => {})
+}
+
 store.subscribe(() => {
   const snapshot = store.getSnapshot()
   saveGame(storage, {
@@ -43,6 +56,7 @@ store.subscribe(() => {
     played: snapshot.played,
     recorded: snapshot.recorded,
   })
+  requestDurableStorageOnce(snapshot.played)
 })
 
 const plan = chooseBoot(window.location.hash, loadGame(storage))
@@ -94,6 +108,19 @@ export default function App() {
   const [clock, setClock] = useState(0)
   const sceneRef = useRef<TableScene | null>(null)
   const toastId = useRef(0)
+  // In dev the plugin serves a stub (no worker; these flags never fire) —
+  // verify this wiring against a real build via `npm run preview`.
+  const {
+    offlineReady: [offlineReady, setOfflineReady],
+    needRefresh: [needRefresh, setNeedRefresh],
+    updateServiceWorker,
+  } = useRegisterSW({
+    // Deferred to the window load event so the full-app precache does not
+    // compete with the first paint's own asset fetches.
+    immediate: false,
+    onRegisteredSW: (_swUrl, registration) => scheduleSwUpdateChecks(registration),
+    onRegisterError: (error) => console.error('the service worker failed to register', error),
+  })
   // The ref mirrors `finishing` for the scene handlers, which must not be
   // recreated per render; the generation counter cancels a superseded
   // auto-finish chain (a stray timer from an abandoned run must not act).
@@ -112,6 +139,14 @@ export default function App() {
     const timer = setInterval(() => setClock(store.getElapsedMs()), 1000)
     return () => clearInterval(timer)
   }, [])
+
+  // One-time confirmation that the precache finished — after this, the
+  // game loads with no network.
+  useEffect(() => {
+    if (!offlineReady) return
+    showToast('Ready to play offline')
+    setOfflineReady(false)
+  }, [offlineReady, setOfflineReady])
 
   const handlers = useMemo<SceneHandlers>(
     () => ({
@@ -260,17 +295,26 @@ export default function App() {
             setTableBroken(true)
           }}
         />
-        {tableBroken && (
-          <div className="banner">
-            The table failed to load. Refresh the page to try again — your game is saved.
-          </div>
-        )}
-        {lost && !snapshot.won && (
-          <div className="banner">
-            Game over — no winning line exists from here. Undo to try another path, or deal again.
-            <button onClick={() => setLost(false)}>Dismiss</button>
-          </div>
-        )}
+        <div className="banner-stack">
+          {tableBroken && (
+            <div className="banner">
+              The table failed to load. Refresh the page to try again — your game is saved.
+            </div>
+          )}
+          {lost && !snapshot.won && (
+            <div className="banner">
+              Game over — no winning line exists from here. Undo to try another path, or deal again.
+              <button onClick={() => setLost(false)}>Dismiss</button>
+            </div>
+          )}
+          {needRefresh && (
+            <div className="banner info">
+              Update ready — reload to apply. Your game is saved.
+              <button onClick={() => updateServiceWorker(true)}>Reload</button>
+              <button onClick={() => setNeedRefresh(false)}>Later</button>
+            </div>
+          )}
+        </div>
         {snapshot.won && (
           <div className="overlay">
             <div className="dialog">
