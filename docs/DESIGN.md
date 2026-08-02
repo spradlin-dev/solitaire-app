@@ -142,8 +142,10 @@ read state and emit primitive engine actions.
   Undo can cross back to move zero, but never clears the sticky `played` flag (below).
 - **Persistence:** localStorage, written after every action and on `visibilitychange`.
   The saved blob is `{ schemaVersion, engineVersion, seed, config, actionLog,
-  elapsedMs, played }`. `elapsedMs` accumulates active play time so "best time"
-  survives reloads. On load: version mismatch or any replay rejection ⇒ discard the
+  elapsedMs, played, recorded }`. `recorded` persists the one-record-per-deal
+  latch: without it, a win that is undone, saved, reloaded, and re-won would
+  write a second stats record. `elapsedMs` accumulates active play time so
+  "best time" survives reloads. On load: version mismatch or any replay rejection ⇒ discard the
   in-progress game gracefully (keep settings and stats) and start fresh — never crash,
   never guess.
 - **Stats:** wins, losses, current/best streak, best time, fewest moves — bucketed by
