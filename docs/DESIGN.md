@@ -165,6 +165,8 @@ read state and emit primitive engine actions.
   persistent sprite graph, drag-and-drop of multi-card runs with drop-target hit
   testing, and tween-based animation (required for auto-finish). A card-back design is
   also a new asset (the Knoll SVG set has none; gin generated one with `Graphics`).
+- Table background: solid `#3A5D6F` (RGB 58, 93, 111) — matched to the camera
+  background color in the sibling Unity project `solitaire-sample-project`.
 - Interactions: drag-and-drop plus tap. Double-click/tap = auto-move (foundation
   first, else leftmost legal tableau spot; tapping mid-run moves the run from that
   card down).
