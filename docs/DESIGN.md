@@ -228,7 +228,11 @@ One workflow, `.github/workflows/deploy.yml`. `package-lock.json` is committed.
   `permissions: { contents: read, pages: write, id-token: write }` (a `permissions:`
   block zeroes anything unlisted — omitting `contents: read` breaks checkout),
   `environment: github-pages`, and `concurrency: { group: pages,
-  cancel-in-progress: false }` so two pushes can't race deployments.
+  cancel-in-progress: false }` on the deploy job so deployments never overlap.
+  Overlap-prevention alone can still publish an older commit after a newer one
+  (slow run A builds while run B lands and deploys first; A then deploys on top);
+  a workflow-level `concurrency` group per ref with `cancel-in-progress: true`
+  cancels the superseded run before it reaches the deploy queue.
 - Auth is GitHub's built-in OIDC — no secrets to create or rotate.
 - One-time manual step: repo Settings → Pages → Source: "GitHub Actions".
 
