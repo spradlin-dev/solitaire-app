@@ -136,6 +136,14 @@ button:disabled {
   background: #33505f;
 }
 
+.fireworks {
+  position: fixed;
+  inset: 0;
+  /* Above the table and toolbar, below the dialogs' overlay. */
+  z-index: 10;
+  pointer-events: none;
+}
+
 .overlay {
   position: absolute;
   inset: 0;
@@ -143,6 +151,7 @@ button:disabled {
   align-items: center;
   justify-content: center;
   background: rgba(10, 18, 22, 0.55);
+  z-index: 20;
 }
 
 .dialog {
