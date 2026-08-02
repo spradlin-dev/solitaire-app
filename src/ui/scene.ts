@@ -23,6 +23,11 @@ if (import.meta.hot) {
 }
 
 const TWEEN_MS = 180
+// A card in flight is lifted off the table: its tween renders in a band
+// above every resting card and settles to its final z on landing, exactly
+// like a real hand lifting a card over the ones left lying there.
+const LIFT_Z = 600
+const DRAG_Z = 1500
 const DRAG_THRESHOLD_PX = 8
 // How long a drag survives buttonless pointermoves before snapping home.
 // A real release often arrives as move(buttons=0) THEN pointerup within a
@@ -140,18 +145,23 @@ export async function createTableScene(app: Application, handlers: SceneHandlers
     readonly fromY: number
     readonly toX: number
     readonly toY: number
+    // Restored when the flight lands; in the air the node sits at
+    // LIFT_Z + finalZ so simultaneous flights keep their landing order.
+    readonly finalZ: number
     elapsed: number
   }
   const tweens = new Map<Container, Tween>()
   let hintElapsed: number | null = null
 
-  function tweenTo(node: Container, target: Point, instant: boolean): void {
+  function tweenTo(node: Container, target: Point, instant: boolean, finalZ: number): void {
     if (instant || (Math.abs(node.x - target.x) < 0.5 && Math.abs(node.y - target.y) < 0.5)) {
       tweens.delete(node)
       node.position.set(target.x, target.y)
+      node.zIndex = finalZ
       return
     }
-    tweens.set(node, { node, fromX: node.x, fromY: node.y, toX: target.x, toY: target.y, elapsed: 0 })
+    node.zIndex = LIFT_Z + finalZ
+    tweens.set(node, { node, fromX: node.x, fromY: node.y, toX: target.x, toY: target.y, finalZ, elapsed: 0 })
   }
 
   function tick(): void {
@@ -164,7 +174,10 @@ export async function createTableScene(app: Application, handlers: SceneHandlers
         tween.fromX + (tween.toX - tween.fromX) * ease,
         tween.fromY + (tween.toY - tween.fromY) * ease,
       )
-      if (t >= 1) tweens.delete(tween.node)
+      if (t >= 1) {
+        tween.node.zIndex = tween.finalZ
+        tweens.delete(tween.node)
+      }
     }
     if (hintElapsed !== null) {
       hintElapsed += dt
@@ -246,8 +259,9 @@ export async function createTableScene(app: Application, handlers: SceneHandlers
   // --- placing cards from a snapshot ---
   // z-bands, low to high: furniture 0-2, stock 10+, waste 100+,
   // foundations 200+, tableau 300 + column * 40 (a column holds at most 19
-  // cards: 6 face-down plus a 13-card run, so the stride never overflows),
-  // dragged run 1000+, hint overlay 2000.
+  // cards: 6 face-down plus a 13-card run, so the stride never overflows;
+  // max 558), in-flight tweens LIFT_Z + final z (610-1158), dragged run
+  // DRAG_Z+, hint overlay 2000.
   function place(card: Card, target: Point, faceUp: boolean, zIndex: number, placeInfo: CardPlace, instant: boolean): void {
     const node = nodes.get(cardKey(card))!
     places.set(cardKey(card), placeInfo)
@@ -260,10 +274,9 @@ export async function createTableScene(app: Application, handlers: SceneHandlers
     node.faceSprite.height = layout.cardHeight
     node.backSprite.width = layout.cardWidth
     node.backSprite.height = layout.cardHeight
-    node.container.zIndex = zIndex
     node.container.eventMode = placeInfo.draggable ? 'static' : 'none'
     node.container.cursor = placeInfo.draggable ? 'pointer' : 'default'
-    tweenTo(node.container, target, instant)
+    tweenTo(node.container, target, instant, zIndex)
   }
 
   function applySnapshot(snapshot: GameSnapshot, instant: boolean): void {
@@ -420,7 +433,7 @@ export async function createTableScene(app: Application, handlers: SceneHandlers
       drag.dragging = true
       lastTap = null
       drag.members.forEach((member, index) => {
-        member.container.zIndex = 1000 + index
+        member.container.zIndex = DRAG_Z + index
       })
     }
     drag.members.forEach((member, index) => {
