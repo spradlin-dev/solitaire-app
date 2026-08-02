@@ -24,6 +24,12 @@ if (import.meta.hot) {
 
 const TWEEN_MS = 180
 const DRAG_THRESHOLD_PX = 8
+// How long a drag survives buttonless pointermoves before snapping home.
+// A real release often arrives as move(buttons=0) THEN pointerup within a
+// frame — macOS trackpads coalesce the final glide past the finger lift —
+// so aborting on the first such move eats every trackpad drop. Only a
+// SUSTAINED buttonless hover means the release itself was never delivered.
+const STALE_RELEASE_MS = 250
 const DOUBLE_TAP_MS = 350
 const HINT_MS = 900
 const HINT_TINT = 0xffd54a
@@ -164,6 +170,9 @@ export async function createTableScene(app: Application, handlers: SceneHandlers
       hintElapsed += dt
       if (hintElapsed >= HINT_MS) clearHint()
       else hintOverlay.alpha = 1 - hintElapsed / HINT_MS
+    }
+    if (drag !== null && drag.staleSince !== null && performance.now() - drag.staleSince > STALE_RELEASE_MS) {
+      abortDrag()
     }
   }
   app.ticker.add(tick)
@@ -329,6 +338,9 @@ export async function createTableScene(app: Application, handlers: SceneHandlers
     readonly offsets: readonly Point[]
     readonly startGlobal: Point
     dragging: boolean
+    // Set when a buttonless move arrives mid-drag; the ticker aborts the
+    // drag once it has been stale past STALE_RELEASE_MS.
+    staleSince: number | null
   }
   let drag: DragState | null = null
   let lastTap: { key: string; at: number } | null = null
@@ -386,17 +398,21 @@ export async function createTableScene(app: Application, handlers: SceneHandlers
       offsets: members.map((member) => ({ x: member.container.x - global.x, y: member.container.y - global.y })),
       startGlobal: global,
       dragging: false,
+      staleSince: null,
     }
   }
 
   function onPointerMove(event: FederatedPointerEvent): void {
     if (drag === null || event.pointerId !== drag.pointerId) return
-    // A hover with no buttons after a missed pointerup means the drag
-    // already ended outside the window.
+    // Buttonless moves: either the tail of a live release (pointerup lands
+    // next frame and resolves the drop) or a hover after a pointerup that
+    // was never delivered. Freeze the run and let the ticker decide: a
+    // prompt pointerup wins, a sustained stale hover aborts.
     if (drag.dragging && event.buttons === 0) {
-      abortDrag()
+      if (drag.staleSince === null) drag.staleSince = performance.now()
       return
     }
+    drag.staleSince = null
     const global = { x: event.global.x, y: event.global.y }
     if (!drag.dragging) {
       const moved = Math.hypot(global.x - drag.startGlobal.x, global.y - drag.startGlobal.y)
