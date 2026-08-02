@@ -1,6 +1,7 @@
-import { advance, fitsFoundation, isWon, legalActions } from './klondike.ts'
+import { advance, fitsFoundation, isRed, isWon, legalActions, rankIndex } from './klondike.ts'
 import type { KlondikeAction, KlondikeState } from './klondike.ts'
-import { cardKey } from './cards.ts'
+import { SUITS, cardKey } from './cards.ts'
+import type { Card } from './cards.ts'
 
 // Assist logic built on top of the engine, never inside it: helpers only
 // read state and emit primitive engine actions (DESIGN.md section 5.1).
@@ -13,10 +14,14 @@ function isMove(action: KlondikeAction): action is MoveAction {
 
 // --- Loss detection (DESIGN.md section 4) ---
 // Both conditions are pure functions of the position; no tracking flags.
-// False positives are forbidden: any legal non-draw action blocks the call.
+// False positives are forbidden: any legal fact-changing action blocks the
+// call. A pointless move (defined with the hint, below) provably preserves
+// the position, so it does not block — without this the player whose only
+// moves are pointless hops is sent around the stock forever instead of
+// being told the game is over.
 
-function hasMoveAction(actions: readonly KlondikeAction[]): boolean {
-  return actions.some(isMove)
+function hasBlockingMove(state: KlondikeState, actions: readonly KlondikeAction[]): boolean {
+  return actions.some((action) => isMove(action) && !isPointless(state, action))
 }
 
 function stockWasteKey(state: KlondikeState): string {
@@ -35,7 +40,10 @@ export function isProvablyLost(state: KlondikeState): boolean {
   if (isWon(state)) return false
   const actions = legalActions(state)
   if (actions.length === 0) return true
-  if (hasMoveAction(actions)) return false
+  if (hasBlockingMove(state, actions)) return false
+  // Only draws, recycles, and pointless moves remain. With no stock cycle
+  // to search, that alone proves the loss.
+  if (state.stock.length === 0 && state.waste.length === 0) return true
   // Only draw/recycle remain. Draw/recycle transitions are deterministic
   // and never reorder the deck, so the stock/waste configuration must
   // eventually revisit one it has already been in (a draw-3 start taken
@@ -54,23 +62,109 @@ export function isProvablyLost(state: KlondikeState): boolean {
     const key = stockWasteKey(current)
     if (visited.has(key)) return true
     visited.add(key)
-    if (hasMoveAction(legalActions(current))) return false
+    // Foundations are frozen during a pure draw/recycle cycle, so the
+    // pointlessness of tableau moves is stable across it.
+    if (hasBlockingMove(current, legalActions(current))) return false
   }
   // Safety cap reached: refuse to declare a loss we could not prove.
   return false
 }
 
+// The game-lost message is deliberately withheld until the player has
+// cycled the remaining cards at least once since their last real move:
+// the proof may exist earlier, but the player gets to finish looking
+// first. Declarable means provably lost AND (nothing left to cycle, or
+// the stock sits empty with a recycle on the log since the last
+// non-cycle action — i.e. a completed fruitless pass).
+export function isLossDeclarable(state: KlondikeState, actionLog: readonly KlondikeAction[]): boolean {
+  if (!isProvablyLost(state)) return false
+  if (state.stock.length === 0 && state.waste.length === 0) return true
+  let recycles = 0
+  for (let index = actionLog.length - 1; index >= 0; index--) {
+    const action = actionLog[index]
+    if (action.type === 'move') break
+    if (action.type === 'recycle') recycles += 1
+  }
+  // One recycle with the stock drawn back to empty is a completed pass;
+  // two recycles prove a full pass happened wherever the player is now —
+  // the declaration must not depend on catching the exact pass boundary.
+  return (recycles >= 1 && state.stock.length === 0) || recycles >= 2
+}
+
 // --- Hint (DESIGN.md section 5.3) ---
 // Priority: move that flips a face-down card > foundation move > tableau
-// move that frees a column or card > waste play > draw or recycle. A
-// regressive move (foundation to tableau, or a null-progress shuttle) is
-// only ever a last resort, so hint() returns null exactly when no action
-// at all is legal. Ties break in legalActions order (waste first, then
-// tableau columns left to right with longer runs first, targets left to
-// right).
+// move that frees a column or card > waste play > draw or recycle, with a
+// regressive foundation-to-tableau move as the last resort. A pointless
+// move (below) is never hinted at all, so hint() returns null exactly
+// when no fact-changing action exists — the UI reports "no useful move"
+// then, unless the loss is provable. Ties break in legalActions order
+// (waste first, then tableau columns left to right with longer runs
+// first, targets left to right).
+
+// A foundation pull is useful only if its tenant chain grounds in a real,
+// currently-visible card. Nothing ever stacks on a tableau ace, and a
+// two's only tenant is an ace that never needs the seat, so either pull
+// can be deleted from any winning line. A taller pull needs a card one
+// rank lower and the opposite color to land on it: the waste top or a
+// face-up tableau card grounds the chain, while another foundation's top
+// counts only if its own pull is useful in turn (a chain of pulls that
+// never reaches a real card shuffles foundations forever). Ranks strictly
+// decrease down the chain, so the recursion terminates; deferring any
+// still-useless pull is never worse, and whatever move could ever ground
+// its chain blocks the loss declaration by itself.
+function pullIsUseful(state: KlondikeState, card: Card): boolean {
+  if (card.rank === 'A' || card.rank === '2') return false
+  const tenant = (candidate: Card) =>
+    rankIndex(candidate.rank) === rankIndex(card.rank) - 1 && isRed(candidate.suit) !== isRed(card.suit)
+  if (state.waste.length > 0 && tenant(state.waste[state.waste.length - 1])) return true
+  for (const tableauPile of state.tableau) {
+    for (let index = 0; index < tableauPile.faceUp.length; index++) {
+      const candidate = tableauPile.faceUp[index]
+      if (!tenant(candidate)) continue
+      // A run head grounds the chain: relocating it flips a card or frees
+      // a column. A mid-run tenant is a matching-parent hop that grounds
+      // only when the parent it would expose can go up — otherwise the
+      // chain ends in a move our own rules call pointless.
+      if (index === 0) return true
+      const parent = tableauPile.faceUp[index - 1]
+      if (fitsFoundation(state.foundations[parent.suit], parent.suit, parent)) return true
+    }
+  }
+  for (const suit of SUITS) {
+    const other = state.foundations[suit]
+    const top = other[other.length - 1]
+    if (top !== undefined && tenant(top) && pullIsUseful(state, top)) return true
+  }
+  return false
+}
+
+// A pointless move leaves the board functionally unchanged: a lone
+// King-led pile hopping between empty columns; a partial run hopping
+// between matching parents — every legal partial tableau move has
+// matching parents by the fit rule — when the card it would expose cannot
+// go to its foundation; or a foundation pull whose tenant chain grounds
+// in no real card (pullIsUseful above). Anything deeper than these checks
+// is solver territory (DESIGN.md section 10).
+function isPointless(state: KlondikeState, move: MoveAction): boolean {
+  if (move.from.kind === 'foundation') {
+    const pile = state.foundations[move.from.suit]
+    const card = pile[pile.length - 1]
+    if (card === undefined) return false
+    return !pullIsUseful(state, card)
+  }
+  if (move.from.kind !== 'tableau' || move.to.kind !== 'tableau') return false
+  const source = state.tableau[move.from.index]
+  if (move.count < source.faceUp.length) {
+    const exposed = source.faceUp[source.faceUp.length - move.count - 1]
+    return !fitsFoundation(state.foundations[exposed.suit], exposed.suit, exposed)
+  }
+  const target = state.tableau[move.to.index]
+  return source.faceDown.length === 0 && target.faceUp.length === 0 && target.faceDown.length === 0
+}
+
 export function hint(state: KlondikeState): KlondikeAction | null {
   const actions = legalActions(state)
-  const moves = actions.filter(isMove)
+  const moves = actions.filter(isMove).filter((move) => !isPointless(state, move))
   const forward = moves.filter((move) => move.from.kind !== 'foundation')
 
   const flipping = forward.filter((move) => {
@@ -83,18 +177,10 @@ export function hint(state: KlondikeState): KlondikeAction | null {
   const toFoundation = forward.filter((move) => move.to.kind === 'foundation')
   if (toFoundation.length > 0) return toFoundation[0]
 
-  // "Frees a column or card", taken literally: a partial run move exposes
-  // the card beneath, and a whole-pile move to a non-empty target nets a
-  // freed column. A whole-pile move to another empty column frees nothing —
-  // without this exclusion the hint shuttles a lone King between two empty
-  // columns forever.
-  const freeing = forward.filter((move) => {
-    if (move.from.kind !== 'tableau' || move.to.kind !== 'tableau') return false
-    const source = state.tableau[move.from.index]
-    if (move.count < source.faceUp.length) return true
-    return source.faceDown.length === 0 && state.tableau[move.to.index].faceUp.length > 0
-  })
-  if (freeing.length > 0) return freeing[0]
+  // Pointless moves are already filtered, so every surviving tableau move
+  // frees a column or a card that matters.
+  const tableauToTableau = forward.filter((move) => move.from.kind === 'tableau' && move.to.kind === 'tableau')
+  if (tableauToTableau.length > 0) return tableauToTableau[0]
 
   const wastePlay = forward.filter((move) => move.from.kind === 'waste' && move.to.kind === 'tableau')
   if (wastePlay.length > 0) return wastePlay[0]
@@ -102,9 +188,6 @@ export function hint(state: KlondikeState): KlondikeAction | null {
   const cycle = actions.find((action) => action.type === 'draw' || action.type === 'recycle')
   if (cycle) return cycle
 
-  // Last resort: a regressive or null-progress move still unblocks the
-  // position, and returning it keeps the contract "null means nothing is
-  // legal" that the UI's lost-message logic relies on.
   return moves[0] ?? null
 }
 

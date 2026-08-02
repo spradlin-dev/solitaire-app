@@ -89,9 +89,20 @@ declare the loss the moment it becomes true, instead of only after the player ma
 grinds through a full pointless pass.
 
 Honesty constraints:
-- **No false positives.** Any legal non-draw action — even a plainly useless one, like
-  shuttling a run between equivalent spots or pulling a foundation card back down —
-  blocks the declaration. We only declare death when it is provable.
+- **No false positives.** Any legal non-draw action that changes the board's
+  facts — including pulling a foundation card back down — blocks the
+  declaration. A pointless move (section 5.3: a bare King-led pile hopping
+  between empty columns; a partial run hopping between matching parents
+  while the exposed card cannot go to its foundation; or a foundation card
+  pulled down when its tenant chain grounds in no useful move — an Ace or
+  Two never has a useful tenant, and a taller pull needs a card one rank
+  lower and the opposite color to land on it, where the waste top grounds
+  the chain, a face-up tableau card grounds it only if relocating it would
+  itself be useful (it heads its run, or the parent it exposes can go up),
+  and another foundation's top counts only if its own pull is useful in
+  turn) provably preserves the position and does not block, so a player
+  whose only moves are pointless is told the game is over instead of being
+  sent around the stock forever. We only declare death when it is provable.
 - **False negatives are accepted.** Games can be unwinnable long before these checks
   can prove it; that requires a solver, out of scope for v1. Hint wording separates
   "game over — no winning line exists from here" (proven) from ordinary hints.
@@ -155,10 +166,15 @@ read state and emit primitive engine actions.
   written when the deal ends:** a win when `isWon` becomes true, a loss when a new deal
   is started first. A proven loss shows the message but does not lock the game or write
   a record — the player may undo out of the dead end and still win.
+  Restarting the same deal (a toolbar action) replays its seed from move zero with a
+  fresh clock and move count: no record is written and the sticky `played` flag
+  survives (the deal was still played); the undo history goes with the log, so a
+  restart cannot itself be undone.
 
 ### 5.3 UI (`src/ui/`) — React shell + pixi.js table
 
-- React renders the chrome: menu, settings, stats panel, win/lose overlays.
+- React renders the chrome: the toolbar (new game, restart deal, undo, hint,
+  auto-finish, share), settings, stats panel, win/lose overlays.
 - The table is a pixi.js canvas. **Honest reuse scope** (verified against gin's code):
   what carries over is `TableCanvas.tsx`'s pixi mount/lifecycle pattern and
   `cardAssets.ts` + the 52 card SVGs. Gin's `scene.ts` is tap-only, gin-specific
@@ -174,7 +190,17 @@ read state and emit primitive engine actions.
   card down).
 - Hint button: highlights the suggested move. Priority: move that flips a face-down
   card > foundation move > tableau move that frees a column or card > waste play >
-  "draw". If loss detection (section 4) fires, show the game-lost message instead.
+  "draw". If loss detection (section 4) fires, show the game-lost message — withheld
+  until the player has cycled the stock at least once since their last real move
+  (when cards remain to cycle): the proof may exist earlier, but the player gets to
+  finish looking first. A move that leaves the board functionally unchanged is never
+  hinted, not even as a last resort: a lone King-led pile hopping to another empty
+  column, a partial run hopping between matching parent cards (the two parents
+  necessarily share rank and color) when the card it would expose cannot go to its
+  foundation, or a foundation card pulled down when its tenant chain grounds in no
+  real card (an Ace or Two never qualifies; see section 4). When no fact-changing
+  action exists at all and the loss is not provable, the hint reports "no useful
+  move" instead (distinct from the game-lost message).
 - Share deal: a Share button copies a link like
   `https://spradlin-dev.github.io/solitaire-app/#deal=<seed>.<drawCount>`. On load, a
   `#deal=` fragment starts exactly that deal in that draw mode. The fragment never

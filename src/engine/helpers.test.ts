@@ -1,8 +1,8 @@
 import { expect, test } from 'vitest'
 import fc from 'fast-check'
-import { autoFinishActions, autoFinishAvailable, hint, isProvablyLost, tapAction } from './helpers.ts'
+import { autoFinishActions, autoFinishAvailable, hint, isLossDeclarable, isProvablyLost, tapAction } from './helpers.ts'
 import { advance, initialState, isWon, legalActions } from './klondike.ts'
-import type { TableauPile } from './klondike.ts'
+import type { KlondikeAction, TableauPile } from './klondike.ts'
 import { RANKS } from './cards.ts'
 import type { Card } from './cards.ts'
 import { cards } from './testCards.ts'
@@ -30,10 +30,17 @@ test('a position with no legal actions at all is lost; a won game never is', () 
 
 test('an available foundation-to-tableau move blocks the loss declaration', () => {
   const blocked = makeState({
-    foundations: { clubs: [], diamonds: [], hearts: suitPrefix('hearts', 2), spades: [] },
-    tableau: [pile([], cards('3:spades')), pile([], cards('9:hearts')), pile([], cards('9:diamonds')), EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE],
+    foundations: { clubs: [], diamonds: [], hearts: suitPrefix('hearts', 3), spades: [] },
+    tableau: [
+      pile([], cards('4:spades')),
+      pile([], cards('2:spades')),
+      pile([], cards('9:hearts')),
+      pile([], cards('9:diamonds')),
+      EMPTY_PILE, EMPTY_PILE, EMPTY_PILE,
+    ],
   })
-  // The only move is pulling the 2 of hearts back down onto the 3 of spades.
+  // The only move is pulling the 3 of hearts down onto the 4 of spades —
+  // and the visible 2 of spades could land on it, so the pull blocks.
   expect(isProvablyLost(blocked)).toBe(false)
 
   const noFoundationCard = makeState({
@@ -103,6 +110,58 @@ test('a sterile cycle that starts mid-pass is still detected in draw 3', () => {
     tableau: [pile([], cards('9:hearts')), pile([], cards('9:diamonds')), EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE],
   })
   expect(isProvablyLost(midPass)).toBe(true)
+})
+
+test('the loss is declared only after a fruitless full pass since the last real move', () => {
+  const move: KlondikeAction = {
+    type: 'move',
+    from: { kind: 'tableau', index: 0 },
+    to: { kind: 'tableau', index: 1 },
+    count: 1,
+  }
+  // Provably lost with the stock mid-pass: one recycle since the move is
+  // not yet a completed pass, but a second recycle proves one happened —
+  // the declaration must not require catching the exact pass boundary.
+  const midPass = makeState({
+    stock: cards('2:clubs', '3:clubs'),
+    tableau: [pile([], cards('9:hearts')), pile([], cards('9:diamonds')), EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE],
+  })
+  expect(isProvablyLost(midPass)).toBe(true)
+  expect(isLossDeclarable(midPass, [move, { type: 'recycle' }, { type: 'draw' }])).toBe(false)
+  expect(
+    isLossDeclarable(midPass, [move, { type: 'recycle' }, { type: 'draw' }, { type: 'recycle' }, { type: 'draw' }]),
+  ).toBe(true)
+
+  // A deal with no moves ever still requires one recycle: the first
+  // pass alone leaves the stock empty with nothing cycled yet.
+  const virginPassDone = makeState({
+    waste: cards('2:clubs', '3:clubs'),
+    tableau: [pile([], cards('9:hearts')), pile([], cards('9:diamonds')), EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE],
+  })
+  expect(isLossDeclarable(virginPassDone, [{ type: 'draw' }])).toBe(false)
+  expect(isLossDeclarable(virginPassDone, [{ type: 'draw' }, { type: 'recycle' }, { type: 'draw' }])).toBe(true)
+
+  // Stock drawn empty: declarable only if a recycle happened since the move.
+  const passDone = makeState({
+    waste: cards('2:clubs', '3:clubs'),
+    tableau: [pile([], cards('9:hearts')), pile([], cards('9:diamonds')), EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE],
+  })
+  expect(isProvablyLost(passDone)).toBe(true)
+  expect(isLossDeclarable(passDone, [{ type: 'recycle' }, { type: 'draw' }, move, { type: 'draw' }])).toBe(false)
+  expect(isLossDeclarable(passDone, [move, { type: 'draw' }, { type: 'recycle' }, { type: 'draw' }])).toBe(true)
+
+  // Nothing left to cycle: declarable immediately.
+  const bare = makeState({
+    tableau: [pile([], cards('9:hearts')), pile([], cards('9:diamonds')), EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE],
+  })
+  expect(isLossDeclarable(bare, [move])).toBe(true)
+
+  // Never declarable when the game is not provably lost.
+  const alive = makeState({
+    waste: cards('8:spades'),
+    tableau: [pile([], cards('9:hearts')), pile([], cards('9:diamonds')), EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE],
+  })
+  expect(isLossDeclarable(alive, [move, { type: 'recycle' }])).toBe(false)
 })
 
 // --- Hint ---
@@ -438,13 +497,18 @@ test('hint never shuttles a lone King between empty columns past a real play', (
   })
 })
 
-test('when the only legal action is regressive, hint returns it rather than null', () => {
-  // Null must mean "nothing is legal at all" — the UI shows the lost
-  // message exactly then. This position is not lost: the 2 of hearts can
-  // come back down.
+test('when the only legal action is a useful regressive pull, hint returns it rather than null', () => {
+  // This position is not lost: the 3 of hearts can come down to catch the
+  // visible 2 of spades, and that pull is the hint's last resort.
   const state = makeState({
-    foundations: { clubs: [], diamonds: [], hearts: suitPrefix('hearts', 2), spades: [] },
-    tableau: [pile([], cards('3:spades')), pile([], cards('9:hearts')), pile([], cards('9:diamonds')), EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE],
+    foundations: { clubs: [], diamonds: [], hearts: suitPrefix('hearts', 3), spades: [] },
+    tableau: [
+      pile([], cards('4:spades')),
+      pile([], cards('2:spades')),
+      pile([], cards('9:hearts')),
+      pile([], cards('9:diamonds')),
+      EMPTY_PILE, EMPTY_PILE, EMPTY_PILE,
+    ],
   })
   expect(isProvablyLost(state)).toBe(false)
   expect(hint(state)).toEqual({
@@ -453,6 +517,273 @@ test('when the only legal action is regressive, hint returns it rather than null
     to: { kind: 'tableau', index: 0 },
     count: 1,
   })
+})
+
+test('a partial-run hop between matching parents is not hinted while the exposed card is useless', () => {
+  const state = makeState({
+    stock: cards('2:clubs'),
+    tableau: [
+      pile([], cards('7:hearts', '6:spades')),
+      pile([], cards('7:diamonds')),
+      EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE,
+    ],
+  })
+  // The 6 of spades could hop from one red 7 to the other, but exposing
+  // the 7 of hearts buys nothing with the hearts foundation empty.
+  expect(hint(state)).toEqual({ type: 'draw' })
+})
+
+test('the same hop is hinted once the exposed card can go to its foundation', () => {
+  const state = makeState({
+    stock: cards('2:clubs'),
+    foundations: { clubs: [], diamonds: [], hearts: suitPrefix('hearts', 6), spades: [] },
+    tableau: [
+      pile([], cards('7:hearts', '6:spades')),
+      pile([], cards('7:diamonds')),
+      EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE,
+    ],
+  })
+  expect(hint(state)).toEqual({
+    type: 'move',
+    from: { kind: 'tableau', index: 0 },
+    to: { kind: 'tableau', index: 1 },
+    count: 1,
+  })
+})
+
+test('a board with only pointless moves hints nothing and IS provably lost', () => {
+  // The stuck case from play-testing: legal moves exist, but every one of
+  // them provably preserves the position, so the player must be told the
+  // game is over rather than hinted around the stock forever.
+  const state = makeState({
+    tableau: [
+      pile([], cards('7:hearts', '6:spades')),
+      pile([], cards('7:diamonds')),
+      EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE,
+    ],
+  })
+  expect(legalActions(state).length).toBeGreaterThan(0)
+  expect(hint(state)).toBeNull()
+  expect(isProvablyLost(state)).toBe(true)
+})
+
+test('a bare King shuttle no longer blocks the loss declaration; a flip-enabling King still does', () => {
+  const bareKingSterile = makeState({
+    stock: cards('2:clubs', '3:clubs'),
+    tableau: [
+      pile([], cards('K:spades')),
+      EMPTY_PILE,
+      pile([], cards('9:hearts')),
+      pile([], cards('9:diamonds')),
+      EMPTY_PILE, EMPTY_PILE, EMPTY_PILE,
+    ],
+  })
+  expect(isProvablyLost(bareKingSterile)).toBe(true)
+
+  // The same position with a face-down card under the King is a real
+  // move (the hop flips it), so it still blocks.
+  const flippingKing = makeState({
+    stock: cards('2:clubs', '3:clubs'),
+    tableau: [
+      pile(cards('7:hearts'), cards('K:spades')),
+      EMPTY_PILE,
+      pile([], cards('9:hearts')),
+      pile([], cards('9:diamonds')),
+      EMPTY_PILE, EMPTY_PILE, EMPTY_PILE,
+    ],
+  })
+  expect(isProvablyLost(flippingKing)).toBe(false)
+})
+
+test('a foundation Ace or Two pulled down is pointless; a Three still blocks the loss', () => {
+  const walls: TableauPile[] = [pile([], cards('9:hearts')), pile([], cards('9:diamonds'))]
+  // Only "move" available: A of spades down onto the 2 of hearts.
+  const aceOnly = makeState({
+    stock: cards('J:clubs', 'J:spades'),
+    foundations: { clubs: [], diamonds: [], hearts: [], spades: suitPrefix('spades', 1) },
+    tableau: [...walls, pile([], cards('2:hearts')), EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE],
+  })
+  expect(isProvablyLost(aceOnly)).toBe(true)
+
+  // Only "move" available: 2 of spades down onto the 3 of hearts.
+  const twoOnly = makeState({
+    stock: cards('J:clubs', 'J:spades'),
+    foundations: { clubs: [], diamonds: [], hearts: [], spades: suitPrefix('spades', 2) },
+    tableau: [...walls, pile([], cards('3:hearts')), EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE],
+  })
+  expect(isProvablyLost(twoOnly)).toBe(true)
+
+  // A 3 pulled down blocks only while a tenant for it is visible: with a
+  // red 2 face up the pull could catch it, without one it is pointless.
+  const threeWithTenant = makeState({
+    stock: cards('J:clubs', 'J:spades'),
+    foundations: { clubs: [], diamonds: [], hearts: [], spades: suitPrefix('spades', 3) },
+    tableau: [
+      ...walls,
+      pile([], cards('4:hearts')),
+      pile([], cards('2:hearts')),
+      EMPTY_PILE, EMPTY_PILE, EMPTY_PILE,
+    ],
+  })
+  expect(isProvablyLost(threeWithTenant)).toBe(false)
+
+  const threeWithoutTenant = makeState({
+    stock: cards('J:clubs', 'J:spades'),
+    foundations: { clubs: [], diamonds: [], hearts: [], spades: suitPrefix('spades', 3) },
+    tableau: [...walls, pile([], cards('4:hearts')), EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE],
+  })
+  expect(isProvablyLost(threeWithoutTenant)).toBe(true)
+})
+
+test('a chain of foundation pulls blocks only when it grounds in a real visible card', () => {
+  // The 4 of spades can come down to the 5 of diamonds only to seat the
+  // 3 of diamonds from its foundation — which itself only matters if a
+  // black 2 is genuinely visible to land on it.
+  const base = {
+    stock: cards('J:clubs', 'J:spades'),
+    foundations: {
+      clubs: [],
+      diamonds: suitPrefix('diamonds', 3),
+      hearts: [],
+      spades: suitPrefix('spades', 4),
+    },
+  }
+  const grounded = makeState({
+    ...base,
+    tableau: [
+      pile([], cards('5:diamonds')),
+      pile([], cards('2:clubs')),
+      pile([], cards('9:hearts')),
+      pile([], cards('9:diamonds')),
+      EMPTY_PILE, EMPTY_PILE, EMPTY_PILE,
+    ],
+  })
+  expect(isProvablyLost(grounded)).toBe(false)
+
+  const ungrounded = makeState({
+    ...base,
+    tableau: [
+      pile([], cards('5:diamonds')),
+      pile([], cards('9:clubs')),
+      pile([], cards('9:hearts')),
+      pile([], cards('9:diamonds')),
+      EMPTY_PILE, EMPTY_PILE, EMPTY_PILE,
+    ],
+  })
+  expect(isProvablyLost(ungrounded)).toBe(true)
+})
+
+test('a mid-run tenant grounds a foundation pull only when its own hop would be useful', () => {
+  const base = {
+    stock: cards('J:clubs', 'J:spades'),
+    foundations: { clubs: [], diamonds: suitPrefix('diamonds', 4), hearts: [], spades: [] },
+  }
+  // The only black 3 sits mid-run under a 4 of hearts that cannot go up:
+  // relocating it onto a pulled-down 4 of diamonds would be a pointless
+  // hop, so the pull chain grounds nowhere and the game is over.
+  const deadEnd = makeState({
+    ...base,
+    tableau: [
+      pile([], cards('5:clubs')),
+      pile(cards('9:spades'), cards('5:spades', '4:hearts', '3:spades')),
+      pile([], cards('9:hearts')),
+      pile([], cards('9:diamonds')),
+      EMPTY_PILE, EMPTY_PILE, EMPTY_PILE,
+    ],
+  })
+  expect(isProvablyLost(deadEnd)).toBe(true)
+
+  // With hearts built to 3, exposing the 4 of hearts is real progress, so
+  // the same tenant grounds the pull and blocks the declaration.
+  const grounded = makeState({
+    ...base,
+    foundations: { ...base.foundations, hearts: suitPrefix('hearts', 3) },
+    tableau: [
+      pile([], cards('5:clubs')),
+      pile(cards('9:spades'), cards('5:spades', '4:hearts', '3:spades')),
+      pile([], cards('9:hearts')),
+      pile([], cards('9:diamonds')),
+      EMPTY_PILE, EMPTY_PILE, EMPTY_PILE,
+    ],
+  })
+  expect(isProvablyLost(grounded)).toBe(false)
+})
+
+test('the play-reported position: ace-down as the only real-looking move, ace in waste buried by draw-3', () => {
+  // Verbatim from a player report: the stock cycle is sterile (the A of
+  // hearts never surfaces under draw-3 alignment) and the only
+  // fact-changing-looking move was pulling the A of spades down. This
+  // must be a provable loss.
+  const log: KlondikeAction[] = [
+    { type: 'move', from: { kind: 'tableau', index: 0 }, to: { kind: 'tableau', index: 5 }, count: 1 },
+    { type: 'move', from: { kind: 'tableau', index: 3 }, to: { kind: 'tableau', index: 0 }, count: 1 },
+    { type: 'draw' },
+    { type: 'draw' },
+    { type: 'draw' },
+    { type: 'move', from: { kind: 'waste' }, to: { kind: 'tableau', index: 2 }, count: 1 },
+    { type: 'move', from: { kind: 'waste' }, to: { kind: 'foundation', suit: 'diamonds' }, count: 1 },
+    { type: 'draw' },
+    { type: 'draw' },
+    { type: 'move', from: { kind: 'waste' }, to: { kind: 'tableau', index: 1 }, count: 1 },
+    { type: 'draw' },
+    { type: 'draw' },
+    { type: 'draw' },
+    { type: 'move', from: { kind: 'waste' }, to: { kind: 'tableau', index: 2 }, count: 1 },
+    { type: 'recycle' },
+    { type: 'draw' },
+    { type: 'draw' },
+    { type: 'move', from: { kind: 'waste' }, to: { kind: 'tableau', index: 1 }, count: 1 },
+    { type: 'move', from: { kind: 'waste' }, to: { kind: 'foundation', suit: 'clubs' }, count: 1 },
+    { type: 'move', from: { kind: 'waste' }, to: { kind: 'foundation', suit: 'clubs' }, count: 1 },
+    { type: 'move', from: { kind: 'waste' }, to: { kind: 'tableau', index: 1 }, count: 1 },
+    { type: 'move', from: { kind: 'tableau', index: 5 }, to: { kind: 'tableau', index: 1 }, count: 2 },
+    { type: 'move', from: { kind: 'tableau', index: 5 }, to: { kind: 'tableau', index: 0 }, count: 1 },
+    { type: 'move', from: { kind: 'tableau', index: 6 }, to: { kind: 'tableau', index: 0 }, count: 1 },
+    { type: 'move', from: { kind: 'tableau', index: 2 }, to: { kind: 'tableau', index: 6 }, count: 3 },
+    { type: 'move', from: { kind: 'waste' }, to: { kind: 'tableau', index: 0 }, count: 1 },
+    { type: 'move', from: { kind: 'waste' }, to: { kind: 'tableau', index: 3 }, count: 1 },
+    { type: 'move', from: { kind: 'tableau', index: 4 }, to: { kind: 'tableau', index: 3 }, count: 1 },
+    { type: 'move', from: { kind: 'tableau', index: 4 }, to: { kind: 'foundation', suit: 'spades' }, count: 1 },
+    { type: 'move', from: { kind: 'tableau', index: 4 }, to: { kind: 'tableau', index: 0 }, count: 1 },
+    { type: 'draw' },
+    { type: 'draw' },
+    { type: 'move', from: { kind: 'waste' }, to: { kind: 'tableau', index: 6 }, count: 1 },
+    { type: 'draw' },
+    { type: 'draw' },
+    { type: 'draw' },
+    { type: 'recycle' },
+    { type: 'draw' },
+    { type: 'draw' },
+    { type: 'move', from: { kind: 'waste' }, to: { kind: 'foundation', suit: 'clubs' }, count: 1 },
+    { type: 'draw' },
+    { type: 'draw' },
+    { type: 'move', from: { kind: 'waste' }, to: { kind: 'foundation', suit: 'clubs' }, count: 1 },
+    { type: 'draw' },
+    { type: 'recycle' },
+    { type: 'draw' },
+    { type: 'draw' },
+    { type: 'draw' },
+    { type: 'draw' },
+    { type: 'recycle' },
+    { type: 'draw' },
+    { type: 'draw' },
+    { type: 'draw' },
+    { type: 'draw' },
+  ]
+  const state = replay(initialState(2996239298, { drawCount: 3 }), log)
+  expect(isProvablyLost(state)).toBe(true)
+})
+
+test('a useless partial hop plus a sterile cycle is a provable loss', () => {
+  const state = makeState({
+    stock: cards('2:clubs', '3:clubs'),
+    tableau: [
+      pile([], cards('7:hearts', '6:spades')),
+      pile([], cards('7:diamonds')),
+      EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE,
+    ],
+  })
+  expect(isProvablyLost(state)).toBe(true)
 })
 
 test('hint tie-break: two flip-enabling moves resolve to the leftmost source column', () => {

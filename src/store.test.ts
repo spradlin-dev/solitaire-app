@@ -62,6 +62,33 @@ test('undo integrity: the popped state equals a fresh replay of the shortened lo
   )
 })
 
+test('restart replays the same deal from move zero without ending it', () => {
+  let t = 1000
+  const results: DealResult[] = []
+  const store = createGameStore({ now: () => t, onDealEnd: (result) => results.push(result) })
+  store.start(42, { drawCount: 3 })
+  const fresh = store.getSnapshot().state
+  store.apply({ type: 'draw' })
+  store.apply({ type: 'draw' })
+  t = 45_000
+  store.restart()
+  const snapshot = store.getSnapshot()
+  expect(snapshot.state).toEqual(fresh)
+  expect(snapshot.state.moves).toBe(0)
+  expect(snapshot.canUndo).toBe(false)
+  expect(snapshot.played).toBe(true)
+  expect(snapshot.seed).toBe(42)
+  // A fresh attempt gets a fresh clock.
+  expect(store.getElapsedMs()).toBe(0)
+  expect(results).toHaveLength(0)
+  // Restarting an untouched deal is a no-op; abandoning the restarted
+  // deal still records its one loss.
+  store.restart()
+  store.start(2, { drawCount: 3 })
+  expect(results).toHaveLength(1)
+  expect(results[0]).toMatchObject({ outcome: 'loss' })
+})
+
 test('undo can cross back to move zero but never clears the played flag', () => {
   const store = createGameStore()
   store.start(42, { drawCount: 3 })

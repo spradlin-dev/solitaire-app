@@ -56,7 +56,7 @@ export function rankIndex(rank: Rank): number {
   return RANK_TO_INDEX.get(rank)!
 }
 
-function isRed(suit: Suit): boolean {
+export function isRed(suit: Suit): boolean {
   return suit === 'diamonds' || suit === 'hearts'
 }
 

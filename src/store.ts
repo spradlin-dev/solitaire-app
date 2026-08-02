@@ -48,6 +48,7 @@ export interface GameStore {
   start(seed: number, config: KlondikeConfig): void
   apply(action: KlondikeAction): AdvanceResult
   undo(): boolean
+  restart(): void
   hydrate(saved: HydrateInput): boolean
   pause(): void
   resume(): void
@@ -168,6 +169,21 @@ export function createGameStore(options: GameStoreOptions = {}): GameStore {
       current.states.pop()
       refresh()
       return true
+    },
+
+    // A fresh attempt at the SAME deal: board, move count, and clock all
+    // reset. No record is written (the deal has not ended) and the sticky
+    // played/recorded latches survive — resetting them would let a restart
+    // erase a played deal from the stats. The undo history is gone with
+    // the log, so a restart itself cannot be undone.
+    restart() {
+      const current = mustSession()
+      if (current.actionLog.length === 0) return
+      current.actionLog = []
+      current.states = [current.states[0]]
+      current.elapsedBaseMs = 0
+      current.runningSince = now()
+      refresh()
     },
 
     hydrate(saved) {
