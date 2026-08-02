@@ -93,8 +93,10 @@ Honesty constraints:
   facts — including pulling a foundation card back down — blocks the
   declaration. A pointless move (section 5.3: a bare King-led pile hopping
   between empty columns; a partial run hopping between matching parents
-  while the exposed card cannot go to its foundation; or a foundation card
-  pulled down when its tenant chain grounds in no useful move — an Ace or
+  while the exposed card cannot go to its foundation; a whole pile moved to
+  free a column when the open columns already meet every King's possible
+  need; or a foundation card pulled down when its tenant chain grounds in
+  no useful move — an Ace or
   Two never has a useful tenant, and a taller pull needs a card one rank
   lower and the opposite color to land on it, where the waste top grounds
   the chain, a face-up tableau card grounds it only if relocating it would
@@ -197,8 +199,10 @@ read state and emit primitive engine actions.
   hinted, not even as a last resort: a lone King-led pile hopping to another empty
   column, a partial run hopping between matching parent cards (the two parents
   necessarily share rank and color) when the card it would expose cannot go to its
-  foundation, or a foundation card pulled down when its tenant chain grounds in no
-  real card (an Ace or Two never qualifies; see section 4). When no fact-changing
+  foundation, a whole pile moved to free a column when the open columns already
+  meet every King's possible need (only Kings use empty columns, and each needs
+  at most one), or a foundation card pulled down when its tenant chain grounds in
+  no real card (an Ace or Two never qualifies; see section 4). When no fact-changing
   action exists at all and the loss is not provable, the hint reports "no useful
   move" instead (distinct from the game-lost message).
 - Share deal: a Share button copies a link like
@@ -208,7 +212,9 @@ read state and emit primitive engine actions.
   setup are unaffected. Shared deals record stats like any other deal.
 - Auto-finish button. The trigger is mode-aware, and the button only ever appears
   when the win is provable:
-  - **Draw 3:** no face-down cards remain AND stock and waste are empty.
+  - **Draw 3:** no face-down cards remain AND at most one card is left across the
+    stock and waste — a single remaining card is always reachable as the waste
+    top, while two can hide one under the other forever.
   - **Draw 1:** no face-down cards remain (stock/waste may still hold cards).
   Safety argument: face-up tableau sections are always valid descending alternating
   runs (an invariant property-tested in section 8), so each pile's smallest card is

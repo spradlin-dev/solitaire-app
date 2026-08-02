@@ -138,13 +138,31 @@ function pullIsUseful(state: KlondikeState, card: Card): boolean {
   return false
 }
 
+// Empty columns are consumed only by Kings, and each King consumes at
+// most one ever (a King heading a pile with nothing face-down beneath it
+// is settled for good — its only remaining move is the pointless
+// shuttle). Freeing a column therefore helps only while the empty
+// columns on the table are fewer than the Kings that could still want
+// one; supply and demand fall together when a King lands, so a satisfied
+// table stays satisfied.
+function freeingAColumnHelps(state: KlondikeState): boolean {
+  let settled = 0
+  let empty = 0
+  for (const pile of state.tableau) {
+    if (pile.faceUp.length === 0 && pile.faceDown.length === 0) empty += 1
+    else if (pile.faceDown.length === 0 && pile.faceUp[0].rank === 'K') settled += 1
+  }
+  return empty < 4 - settled
+}
+
 // A pointless move leaves the board functionally unchanged: a lone
 // King-led pile hopping between empty columns; a partial run hopping
 // between matching parents — every legal partial tableau move has
 // matching parents by the fit rule — when the card it would expose cannot
-// go to its foundation; or a foundation pull whose tenant chain grounds
-// in no real card (pullIsUseful above). Anything deeper than these checks
-// is solver territory (DESIGN.md section 10).
+// go to its foundation; a whole pile moved to free a column no King can
+// ever use again; or a foundation pull whose tenant chain grounds in no
+// real card (pullIsUseful above). Anything deeper than these checks is
+// solver territory (DESIGN.md section 10).
 function isPointless(state: KlondikeState, move: MoveAction): boolean {
   if (move.from.kind === 'foundation') {
     const pile = state.foundations[move.from.suit]
@@ -158,8 +176,12 @@ function isPointless(state: KlondikeState, move: MoveAction): boolean {
     const exposed = source.faceUp[source.faceUp.length - move.count - 1]
     return !fitsFoundation(state.foundations[exposed.suit], exposed.suit, exposed)
   }
+  if (source.faceDown.length > 0) return false
   const target = state.tableau[move.to.index]
-  return source.faceDown.length === 0 && target.faceUp.length === 0 && target.faceDown.length === 0
+  if (target.faceUp.length === 0 && target.faceDown.length === 0) return true
+  // A whole pile onto a non-empty target frees its column — worthless
+  // when the open columns already meet every King's possible need.
+  return !freeingAColumnHelps(state)
 }
 
 export function hint(state: KlondikeState): KlondikeAction | null {
@@ -201,7 +223,10 @@ export function hint(state: KlondikeState): KlondikeAction | null {
 export function autoFinishAvailable(state: KlondikeState): boolean {
   if (isWon(state)) return false
   if (state.tableau.some((pile) => pile.faceDown.length > 0)) return false
-  if (state.config.drawCount === 3) return state.stock.length === 0 && state.waste.length === 0
+  // Draw 3 can bury cards forever, but a SINGLE remaining stock-or-waste
+  // card is always reachable: it is (or becomes) the waste top directly.
+  // Two can hide one under the other for good.
+  if (state.config.drawCount === 3) return state.stock.length + state.waste.length <= 1
   return true
 }
 

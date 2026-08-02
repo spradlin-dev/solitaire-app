@@ -195,7 +195,17 @@ test('a tableau move beats a waste play, and a waste play beats drawing', () => 
   const both = makeState({
     waste: cards('6:clubs'),
     stock: cards('2:clubs'),
-    tableau: [pile([], cards('6:spades')), pile([], cards('7:hearts')), EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE],
+    // Walls keep the open-column count below the Kings' possible demand,
+    // so consolidating the 6 of spades genuinely frees a useful column.
+    tableau: [
+      pile([], cards('6:spades')),
+      pile([], cards('7:hearts')),
+      pile([], cards('9:hearts')),
+      pile([], cards('9:diamonds')),
+      pile([], cards('J:hearts')),
+      pile([], cards('J:diamonds')),
+      EMPTY_PILE,
+    ],
   })
   expect(hint(both)).toEqual({
     type: 'move',
@@ -207,7 +217,15 @@ test('a tableau move beats a waste play, and a waste play beats drawing', () => 
   const wasteOnly = makeState({
     waste: cards('6:clubs'),
     stock: cards('2:clubs'),
-    tableau: [pile([], cards('7:hearts')), EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE],
+    tableau: [
+      pile([], cards('7:hearts')),
+      pile([], cards('9:hearts')),
+      pile([], cards('9:diamonds')),
+      pile([], cards('J:hearts')),
+      pile([], cards('J:diamonds')),
+      EMPTY_PILE,
+      EMPTY_PILE,
+    ],
   })
   expect(hint(wasteOnly)).toEqual({
     type: 'move',
@@ -272,10 +290,17 @@ test('the auto-finish trigger is mode-aware', () => {
   })
   expect(autoFinishAvailable(faceDownLeft)).toBe(false)
 
-  const stockLeftDraw3 = makeState({ stock: cards('K:hearts'), config: { drawCount: 3 } })
-  expect(autoFinishAvailable(stockLeftDraw3)).toBe(false)
+  // Draw 3: one reachable card left is fine; two can bury each other.
+  const oneInStockDraw3 = makeState({ stock: cards('K:hearts'), config: { drawCount: 3 } })
+  expect(autoFinishAvailable(oneInStockDraw3)).toBe(true)
 
-  const stockLeftDraw1 = makeState({ stock: cards('K:hearts'), config: { drawCount: 1 } })
+  const oneInWasteDraw3 = makeState({ waste: cards('K:hearts'), config: { drawCount: 3 } })
+  expect(autoFinishAvailable(oneInWasteDraw3)).toBe(true)
+
+  const twoLeftDraw3 = makeState({ stock: cards('Q:hearts'), waste: cards('K:hearts'), config: { drawCount: 3 } })
+  expect(autoFinishAvailable(twoLeftDraw3)).toBe(false)
+
+  const stockLeftDraw1 = makeState({ stock: cards('K:hearts', 'Q:hearts'), config: { drawCount: 1 } })
   expect(autoFinishAvailable(stockLeftDraw1)).toBe(true)
 
   const won = makeState({
@@ -311,6 +336,21 @@ test('draw 3 auto-finish completes a fully exposed tableau', () => {
   const actions = autoFinishActions(state)
   expect(actions).toHaveLength(8)
   expect(isWon(replay(state, actions))).toBe(true)
+})
+
+test('draw 3 auto-finish plays out a single remaining stock card', () => {
+  const state = makeState({
+    foundations: {
+      clubs: suitPrefix('clubs', 13),
+      diamonds: suitPrefix('diamonds', 13),
+      hearts: suitPrefix('hearts', 12),
+      spades: suitPrefix('spades', 13),
+    },
+    stock: cards('K:hearts'),
+    config: { drawCount: 3 },
+  })
+  expect(autoFinishAvailable(state)).toBe(true)
+  expect(isWon(replay(state, autoFinishActions(state)))).toBe(true)
 })
 
 test('draw 1 auto-finish draws and recycles its way through the stock and waste', () => {
@@ -635,6 +675,67 @@ test('a foundation Ace or Two pulled down is pointless; a Three still blocks the
   expect(isProvablyLost(threeWithoutTenant)).toBe(true)
 })
 
+test('a buried King already served by an open column does not justify freeing another', () => {
+  // One unsettled King (face-down under the 5 of hearts) but one column
+  // already open: supply meets demand, so emptying the 9's column buys
+  // nothing — and with a sterile stock, that makes this a provable loss.
+  const served = makeState({
+    stock: cards('2:clubs'),
+    tableau: [
+      pile([], cards('K:spades')),
+      pile([], cards('K:hearts')),
+      pile([], cards('K:diamonds')),
+      pile(cards('K:clubs'), cards('5:hearts')),
+      pile([], cards('10:clubs')),
+      pile([], cards('9:diamonds')),
+      EMPTY_PILE,
+    ],
+  })
+  expect(isProvablyLost(served)).toBe(true)
+})
+
+test('freeing a column is pointless once all four Kings are settled', () => {
+  // The play-reported case: a lone 9 of diamonds could hop onto the 10 of
+  // clubs to empty its column, but with every King already heading a
+  // column no King can ever use the space.
+  const allSettled = makeState({
+    stock: cards('2:clubs'),
+    tableau: [
+      pile([], cards('K:spades')),
+      pile([], cards('K:hearts')),
+      pile([], cards('K:diamonds')),
+      pile([], cards('K:clubs')),
+      pile([], cards('10:clubs')),
+      pile([], cards('9:diamonds')),
+      EMPTY_PILE,
+    ],
+  })
+  expect(hint(allSettled)).toEqual({ type: 'draw' })
+  expect(isProvablyLost(allSettled)).toBe(true)
+
+  // With one King still sitting on a face-down card, a freed column could
+  // receive it, so the same move is useful again.
+  const oneUnsettled = makeState({
+    stock: cards('2:clubs'),
+    tableau: [
+      pile([], cards('K:spades')),
+      pile([], cards('K:hearts')),
+      pile([], cards('K:diamonds')),
+      pile(cards('2:hearts'), cards('K:clubs')),
+      pile([], cards('10:clubs')),
+      pile([], cards('9:diamonds')),
+      pile([], cards('3:spades')),
+    ],
+  })
+  expect(hint(oneUnsettled)).toEqual({
+    type: 'move',
+    from: { kind: 'tableau', index: 5 },
+    to: { kind: 'tableau', index: 4 },
+    count: 1,
+  })
+  expect(isProvablyLost(oneUnsettled)).toBe(false)
+})
+
 test('a chain of foundation pulls blocks only when it grounds in a real visible card', () => {
   // The 4 of spades can come down to the 5 of diamonds only to seat the
   // 3 of diamonds from its foundation — which itself only matters if a
@@ -806,15 +907,20 @@ test('hint tie-break: two flip-enabling moves resolve to the leftmost source col
 
 test('hint tie-break: within a tier, the longer run beats the shorter one from the same pile', () => {
   const state = makeState({
+    // Spades built to 7 makes the short hop useful (it exposes the 8 of
+    // spades for the foundation); the walls keep open columns scarce so
+    // the whole-run move is useful too. Both live in the same tier and
+    // legalActions order puts the longer run first.
+    foundations: { clubs: [], diamonds: [], hearts: [], spades: suitPrefix('spades', 7) },
     tableau: [
       pile([], cards('9:hearts', '8:spades', '7:diamonds')),
       pile([], cards('10:spades')),
       pile([], cards('8:clubs')),
-      EMPTY_PILE, EMPTY_PILE, EMPTY_PILE, EMPTY_PILE,
+      pile([], cards('Q:hearts')),
+      pile([], cards('Q:diamonds')),
+      EMPTY_PILE, EMPTY_PILE,
     ],
   })
-  // Both the whole run (onto the 10) and the lone 7 (onto the 8) free
-  // something; legalActions order puts the longer run first.
   expect(hint(state)).toEqual({
     type: 'move',
     from: { kind: 'tableau', index: 0 },
