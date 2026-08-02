@@ -98,9 +98,6 @@ export default function App() {
   const [settings, setSettings] = useState(() => loadSettings(storage))
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuView, setMenuView] = useState<'actions' | 'stats'>('actions')
-  // Shows the win screen (fireworks and dialog) without touching the game
-  // or the stats — a preview, not a state change.
-  const [winPreview, setWinPreview] = useState(false)
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null)
   const [lost, setLost] = useState(false)
   const [finishing, setFinishing] = useState(false)
@@ -146,7 +143,7 @@ export default function App() {
   // safe regardless of how the events interleave.
   useEffect(() => {
     const sync = () => {
-      if (document.hidden || !document.hasFocus() || menuOpen || winPreview) store.pause()
+      if (document.hidden || !document.hasFocus() || menuOpen) store.pause()
       else store.resume()
     }
     sync()
@@ -158,7 +155,7 @@ export default function App() {
       window.removeEventListener('blur', sync)
       document.removeEventListener('visibilitychange', sync)
     }
-  }, [menuOpen, winPreview])
+  }, [menuOpen])
 
   // One-time confirmation that the precache finished — after this, the
   // game loads with no network.
@@ -192,7 +189,6 @@ export default function App() {
   const newGame = (drawCount: 1 | 3) => {
     stopFinishing()
     setLost(false)
-    setWinPreview(false)
     store.start(randomSeed(), { drawCount })
   }
 
@@ -217,7 +213,6 @@ export default function App() {
   const onRestart = () => {
     stopFinishing()
     setLost(false)
-    setWinPreview(false)
     store.restart()
   }
 
@@ -328,19 +323,15 @@ export default function App() {
             </div>
           )}
         </div>
-        {(snapshot.won || winPreview) && <WinFireworks />}
-        {(snapshot.won || winPreview) && (
+        {snapshot.won && <WinFireworks />}
+        {snapshot.won && (
           <div className="overlay">
             <div className="dialog">
               <h2>You won!</h2>
               <p>
                 {formatTime(snapshot.elapsedMs)} · {snapshot.state.moves} moves
               </p>
-              {snapshot.won ? (
-                <button onClick={() => newGame(settings.drawCount)}>New game</button>
-              ) : (
-                <button onClick={() => setWinPreview(false)}>Close</button>
-              )}
+              <button onClick={() => newGame(settings.drawCount)}>New game</button>
             </div>
           </div>
         )}
@@ -370,14 +361,6 @@ export default function App() {
                   </button>
                   <button onClick={onShare}>Share deal</button>
                   <button onClick={() => setMenuView('stats')}>Stats</button>
-                  <button
-                    onClick={() => {
-                      setMenuOpen(false)
-                      setWinPreview(true)
-                    }}
-                  >
-                    Preview win screen
-                  </button>
                   <label className="mode">
                     Next deal:
                     <select

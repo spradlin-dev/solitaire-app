@@ -181,8 +181,7 @@ read state and emit primitive engine actions.
 - The clock runs only while the player can act: it pauses while the tab is
   hidden, the window is unfocused, or the pause menu is open.
 - A win celebrates with a full-viewport fireworks layer stacked behind the win
-  dialog (fireworks-js); the pause menu's "Preview win screen" shows the same
-  screen as a pure preview, touching neither the game nor the stats.
+  dialog (fireworks-js).
 - The table is a pixi.js canvas. **Honest reuse scope** (verified against gin's code):
   what carries over is `TableCanvas.tsx`'s pixi mount/lifecycle pattern and
   `cardAssets.ts` + the 52 card SVGs. Gin's `scene.ts` is tap-only, gin-specific
