@@ -155,30 +155,30 @@ button:disabled {
   gap: 12px;
 }
 
-.panel {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  background: #1b2830;
-  border-radius: 10px;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+.dialog.menu {
+  min-width: 240px;
 }
 
-.panel table {
+.dialog.menu button {
+  width: 100%;
+}
+
+.dialog.menu .mode {
+  justify-content: center;
+}
+
+.dialog table {
   border-collapse: collapse;
 }
 
-.panel th,
-.panel td {
+.dialog th,
+.dialog td {
   padding: 4px 10px;
   text-align: right;
   color: #cfdae0;
 }
 
-.panel tbody th {
+.dialog tbody th {
   text-align: left;
 }
 

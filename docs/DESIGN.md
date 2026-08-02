@@ -175,8 +175,11 @@ read state and emit primitive engine actions.
 
 ### 5.3 UI (`src/ui/`) — React shell + pixi.js table
 
-- React renders the chrome: the toolbar (new game, restart deal, undo, hint,
-  auto-finish, share), settings, stats panel, win/lose overlays.
+- React renders the chrome: a slim toolbar (undo, hint, auto-finish when
+  available, menu), a pause menu holding the session actions (new game, restart
+  deal, share deal, stats, next-deal draw mode), and the win/lose overlays.
+- The clock runs only while the player can act: it pauses while the tab is
+  hidden, the window is unfocused, or the pause menu is open.
 - The table is a pixi.js canvas. **Honest reuse scope** (verified against gin's code):
   what carries over is `TableCanvas.tsx`'s pixi mount/lifecycle pattern and
   `cardAssets.ts` + the 52 card SVGs. Gin's `scene.ts` is tap-only, gin-specific

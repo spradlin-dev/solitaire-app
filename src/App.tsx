@@ -71,11 +71,6 @@ if (plan.start !== null) {
 }
 if (!booted) store.start(randomSeed(), loadSettings(storage))
 
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) store.pause()
-  else store.resume()
-})
-
 function formatTime(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000)
   const minutes = Math.floor(totalSeconds / 60)
@@ -100,7 +95,8 @@ function StatsRow({ label, stats }: { label: string; stats: ModeStats }) {
 export default function App() {
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot)
   const [settings, setSettings] = useState(() => loadSettings(storage))
-  const [statsOpen, setStatsOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuView, setMenuView] = useState<'actions' | 'stats'>('actions')
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null)
   const [lost, setLost] = useState(false)
   const [finishing, setFinishing] = useState(false)
@@ -139,6 +135,26 @@ export default function App() {
     const timer = setInterval(() => setClock(store.getElapsedMs()), 1000)
     return () => clearInterval(timer)
   }, [])
+
+  // The clock runs only while the player can actually act on the board:
+  // tab visible, window focused, pause menu closed. pause/resume are
+  // idempotent, so re-evaluating the whole predicate on every event is
+  // safe regardless of how the events interleave.
+  useEffect(() => {
+    const sync = () => {
+      if (document.hidden || !document.hasFocus() || menuOpen) store.pause()
+      else store.resume()
+    }
+    sync()
+    window.addEventListener('focus', sync)
+    window.addEventListener('blur', sync)
+    document.addEventListener('visibilitychange', sync)
+    return () => {
+      window.removeEventListener('focus', sync)
+      window.removeEventListener('blur', sync)
+      document.removeEventListener('visibilitychange', sync)
+    }
+  }, [menuOpen])
 
   // One-time confirmation that the precache finished — after this, the
   // game loads with no network.
@@ -240,12 +256,12 @@ export default function App() {
 
   const canFinish = !snapshot.won && !finishing && autoFinishAvailable(snapshot.state)
   // The recorded latch flips exactly when a deal ends, so it is the
-  // narrowest refresh trigger for an open stats panel.
+  // narrowest refresh trigger for an open stats view.
   const dealEnded = snapshot.recorded
   const stats = useMemo(() => {
     void dealEnded
-    return statsOpen ? loadStats(storage) : null
-  }, [statsOpen, dealEnded])
+    return menuOpen && menuView === 'stats' ? loadStats(storage) : null
+  }, [menuOpen, menuView, dealEnded])
 
   return (
     <div className="app">
@@ -255,31 +271,22 @@ export default function App() {
           {formatTime(clock)} · {snapshot.state.moves} moves · Draw {snapshot.config.drawCount}
         </span>
         <div className="buttons">
-          <button onClick={() => newGame(settings.drawCount)} disabled={finishing}>
-            New game
-          </button>
           <button onClick={onUndo} disabled={!snapshot.canUndo || finishing}>
             Undo
-          </button>
-          <button onClick={onRestart} disabled={!snapshot.canUndo || finishing}>
-            Restart deal
           </button>
           <button onClick={onHint} disabled={snapshot.won || finishing}>
             Hint
           </button>
           {canFinish && <button onClick={onAutoFinish}>Auto-finish</button>}
-          <button onClick={onShare}>Share deal</button>
-          <button onClick={() => setStatsOpen((open) => !open)}>Stats</button>
-          <label className="mode">
-            Next deal:
-            <select
-              value={settings.drawCount}
-              onChange={(event) => setDrawMode(Number(event.target.value) === 1 ? 1 : 3)}
-            >
-              <option value={3}>Draw 3</option>
-              <option value={1}>Draw 1</option>
-            </select>
-          </label>
+          <button
+            onClick={() => {
+              setMenuView('actions')
+              setMenuOpen(true)
+            }}
+            disabled={finishing}
+          >
+            Menu
+          </button>
         </div>
       </header>
 
@@ -326,27 +333,69 @@ export default function App() {
             </div>
           </div>
         )}
-        {stats !== null && (
-          <div className="panel">
-            <h2>Statistics</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th />
-                  <th>Wins</th>
-                  <th>Losses</th>
-                  <th>Streak</th>
-                  <th>Best streak</th>
-                  <th>Best time</th>
-                  <th>Fewest moves</th>
-                </tr>
-              </thead>
-              <tbody>
-                <StatsRow label="Draw 1" stats={stats.draw1} />
-                <StatsRow label="Draw 3" stats={stats.draw3} />
-              </tbody>
-            </table>
-            <button onClick={() => setStatsOpen(false)}>Close</button>
+        {menuOpen && (
+          <div className="overlay">
+            <div className="dialog menu">
+              {menuView === 'actions' ? (
+                <>
+                  <h2>Paused</h2>
+                  <button onClick={() => setMenuOpen(false)}>Resume</button>
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false)
+                      newGame(settings.drawCount)
+                    }}
+                  >
+                    New game
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false)
+                      onRestart()
+                    }}
+                    disabled={!snapshot.canUndo}
+                  >
+                    Restart deal
+                  </button>
+                  <button onClick={onShare}>Share deal</button>
+                  <button onClick={() => setMenuView('stats')}>Stats</button>
+                  <label className="mode">
+                    Next deal:
+                    <select
+                      value={settings.drawCount}
+                      onChange={(event) => setDrawMode(Number(event.target.value) === 1 ? 1 : 3)}
+                    >
+                      <option value={3}>Draw 3</option>
+                      <option value={1}>Draw 1</option>
+                    </select>
+                  </label>
+                </>
+              ) : (
+                <>
+                  <h2>Statistics</h2>
+                  {stats !== null && (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th />
+                          <th>Wins</th>
+                          <th>Losses</th>
+                          <th>Streak</th>
+                          <th>Best streak</th>
+                          <th>Best time</th>
+                          <th>Fewest moves</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <StatsRow label="Draw 1" stats={stats.draw1} />
+                        <StatsRow label="Draw 3" stats={stats.draw3} />
+                      </tbody>
+                    </table>
+                  )}
+                  <button onClick={() => setMenuView('actions')}>Back</button>
+                </>
+              )}
+            </div>
           </div>
         )}
         {toast !== null && <div className="toast">{toast.message}</div>}
