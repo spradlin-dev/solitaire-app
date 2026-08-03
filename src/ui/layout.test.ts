@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest'
 import fc from 'fast-check'
 import {
+  BUDGET_FULL_HEIGHT,
   CARD_RATIO,
   computeLayout,
   dropTargetAt,
@@ -14,9 +15,13 @@ import {
 import type { Rect } from './layout.ts'
 import { SUITS } from '../engine/cards.ts'
 
+const WORST_COLUMN = { faceDown: 6, faceUp: 13 }
+
 const arbCanvas = fc.record({
   width: fc.integer({ min: 320, max: 4000 }),
-  height: fc.integer({ min: 320, max: 4000 }),
+  // Biased so short (landscape-phone) heights appear in every run, not in
+  // one of twenty samples.
+  height: fc.oneof(fc.integer({ min: 320, max: 4000 }), fc.integer({ min: 320, max: 519 })),
 })
 
 test('every zone fits inside the canvas at any size', () => {
@@ -30,9 +35,20 @@ test('every zone fits inside the canvas at any size', () => {
         expect(x - layout.cardWidth / 2).toBeGreaterThanOrEqual(0)
         expect(x + layout.cardWidth / 2).toBeLessThanOrEqual(width)
       }
-      // The tallest possible column (6 face-down + a 13-card run) fits.
-      const bottom = pileCardY(layout, 6, 18) + layout.cardHeight / 2
-      expect(bottom).toBeLessThanOrEqual(height)
+      // The tallest possible column fits WITH a bottom margin — asserting
+      // the margin (not just <= height) catches a dropped term in the
+      // tableauSpan formula that mere fitting would forgive.
+      const bottom = pileCardY(layout, WORST_COLUMN, 18) + layout.cardHeight / 2
+      expect(bottom).toBeLessThanOrEqual(height - 0.1 * layout.cardHeight)
+      // At full-budget heights the worst case is reserved outright: the
+      // walk is the plain uncompressed one. This pins the reservation
+      // path, which compression would otherwise make untestable.
+      if (height >= BUDGET_FULL_HEIGHT) {
+        expect(pileCardY(layout, WORST_COLUMN, 18)).toBeCloseTo(
+          layout.tableauTop + 6 * layout.faceDownOffset + 12 * layout.faceUpOffset,
+          6,
+        )
+      }
     }),
     { numRuns: 60 },
   )
@@ -49,12 +65,15 @@ test('columns are evenly spaced left to right and clear of each other', () => {
 
 test('pile card y walks face-down offsets then face-up offsets', () => {
   const layout = computeLayout(1280, 900)
-  expect(pileCardY(layout, 2, 0)).toBe(layout.tableauTop)
-  expect(pileCardY(layout, 2, 1)).toBeCloseTo(layout.tableauTop + layout.faceDownOffset, 6)
-  expect(pileCardY(layout, 2, 2)).toBeCloseTo(layout.tableauTop + 2 * layout.faceDownOffset, 6)
-  expect(pileCardY(layout, 2, 3)).toBeCloseTo(layout.tableauTop + 2 * layout.faceDownOffset + layout.faceUpOffset, 6)
+  const counts = { faceDown: 2, faceUp: 2 }
+  expect(pileCardY(layout, counts, 0)).toBe(layout.tableauTop)
+  expect(pileCardY(layout, counts, 1)).toBeCloseTo(layout.tableauTop + layout.faceDownOffset, 6)
+  expect(pileCardY(layout, counts, 2)).toBeCloseTo(layout.tableauTop + 2 * layout.faceDownOffset, 6)
+  expect(pileCardY(layout, counts, 3)).toBeCloseTo(layout.tableauTop + 2 * layout.faceDownOffset + layout.faceUpOffset, 6)
   // Face-up cards overlap more loosely than face-down ones.
   expect(layout.faceUpOffset).toBeGreaterThan(layout.faceDownOffset)
+  // An empty column's slot sits exactly at the tableau top.
+  expect(pileCardY(layout, { faceDown: 0, faceUp: 0 }, 0)).toBe(layout.tableauTop)
 })
 
 test('drop targets resolve foundations first, then column bands, then nothing', () => {
@@ -82,7 +101,50 @@ test('compact mode gives a phone meaningfully bigger cards than desktop spacing 
   // Desktop spacing packs 9.02 card-widths across; compact packs 7.6.
   expect(compact.cardWidth).toBeGreaterThan((390 / 9.02) * 1.15)
   // The whole board still fits.
-  expect(pileCardY(compact, 6, 18) + compact.cardHeight / 2).toBeLessThanOrEqual(844)
+  expect(pileCardY(compact, WORST_COLUMN, 18) + compact.cardHeight / 2).toBeLessThanOrEqual(844)
+})
+
+test('a short landscape screen gets playable card sizes', () => {
+  const short = computeLayout(780, 320)
+  // The concrete claim behind "looks good in landscape": cards stay above
+  // a hard readability floor at a typical phone-landscape canvas.
+  expect(short.cardWidth).toBeGreaterThan(45)
+  // And the worst-case column still fits, via compression.
+  expect(pileCardY(short, WORST_COLUMN, 18) + short.cardHeight / 2).toBeLessThanOrEqual(320)
+})
+
+test('card size never cliffs as the canvas height shrinks through the budget band', () => {
+  // One pixel of height must never change the card size noticeably — the
+  // budget interpolates instead of stepping.
+  let previous = computeLayout(900, 840).cardWidth
+  for (let height = 839; height >= 320; height--) {
+    const next = computeLayout(900, height).cardWidth
+    expect(Math.abs(next - previous)).toBeLessThan(previous * 0.04)
+    previous = next
+  }
+})
+
+test('tall columns compress their overlaps in order; short piles are untouched', () => {
+  const short = computeLayout(780, 320)
+  const ys = Array.from({ length: 19 }, (_, index) => pileCardY(short, WORST_COLUMN, index))
+  for (let i = 1; i < ys.length; i++) {
+    expect(ys[i]).toBeGreaterThan(ys[i - 1])
+  }
+  expect(ys[18] + short.cardHeight / 2).toBeLessThanOrEqual(320)
+  // A pile that fits naturally keeps the plain uncompressed walk.
+  const counts = { faceDown: 2, faceUp: 2 }
+  expect(pileCardY(short, counts, 3)).toBeCloseTo(short.tableauTop + 2 * short.faceDownOffset + short.faceUpOffset, 6)
+})
+
+test('compression never hides the rank glyph: the squeezed step keeps the corner index visible', () => {
+  // The vendored faces draw the rank glyph in the top ~12% of the card
+  // and the suit pip down to ~25%. The worst-case squeeze must keep at
+  // least the rank visible, or buried run cards become unidentifiable.
+  // This pins the floor so a future budget retune trips a test instead
+  // of silently clipping the art.
+  const short = computeLayout(780, 320)
+  const step = pileCardY(short, WORST_COLUMN, 8) - pileCardY(short, WORST_COLUMN, 7)
+  expect(step).toBeGreaterThan(0.12 * short.cardHeight)
 })
 
 test('draw 3 fans the last three waste cards; draw 1 stacks them', () => {

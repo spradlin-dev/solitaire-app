@@ -315,10 +315,11 @@ export async function createTableScene(app: Application, handlers: SceneHandlers
     }
     state.tableau.forEach((pile, column) => {
       const x = layout.columnXs[column]
+      const counts = { faceDown: pile.faceDown.length, faceUp: pile.faceUp.length }
       pile.faceDown.forEach((card, index) => {
         place(
           card,
-          { x, y: pileCardY(layout, pile.faceDown.length, index) },
+          { x, y: pileCardY(layout, counts, index) },
           false,
           300 + column * 40 + index,
           { zone: { kind: 'tableau', index: column }, pileIndex: index, faceUpIndex: -1, draggable: false },
@@ -329,7 +330,7 @@ export async function createTableScene(app: Application, handlers: SceneHandlers
         const pileIndex = pile.faceDown.length + faceUpIndex
         place(
           card,
-          { x, y: pileCardY(layout, pile.faceDown.length, pileIndex) },
+          { x, y: pileCardY(layout, counts, pileIndex) },
           true,
           300 + column * 40 + pileIndex,
           { zone: { kind: 'tableau', index: column }, pileIndex, faceUpIndex, draggable: true },
@@ -493,6 +494,9 @@ export async function createTableScene(app: Application, handlers: SceneHandlers
   })
 
   function onResize(): void {
+    // A resize invalidates a live drag's grab offsets and card size; snap
+    // the run home rather than dropping at stale geometry.
+    abortDrag()
     layout = computeLayout(app.screen.width, app.screen.height)
     rebuildFurniture()
     if (last !== null) applySnapshot(last, true)
