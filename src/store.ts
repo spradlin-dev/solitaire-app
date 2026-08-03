@@ -50,6 +50,9 @@ export interface GameStore {
   undo(): boolean
   restart(): void
   hydrate(saved: HydrateInput): boolean
+  // Starts the clock without a move; the caller decides what counts as
+  // a signal of intent.
+  startClock(): void
   pause(): void
   resume(): void
   getElapsedMs(): number
@@ -65,6 +68,13 @@ interface GameSession {
   recorded: boolean
   elapsedBaseMs: number
   runningSince: number | null
+  // The clock is armed by the player's first signal of intent (an action
+  // or a hint request); until then it sits at 0:00, so merely looking at
+  // a fresh deal costs no time. Paused is tracked separately so intent
+  // arriving WHILE paused (a hint from the still-live toolbar under the
+  // pause menu) arms without running: running = armed and not paused.
+  clockArmed: boolean
+  paused: boolean
 }
 
 export function createGameStore(options: GameStoreOptions = {}): GameStore {
@@ -88,6 +98,12 @@ export function createGameStore(options: GameStoreOptions = {}): GameStore {
 
   function currentState(current: GameSession): KlondikeState {
     return current.states[current.states.length - 1]
+  }
+
+  function armClock(current: GameSession): void {
+    if (current.clockArmed) return
+    current.clockArmed = true
+    if (!current.paused) current.runningSince = now()
   }
 
   function refresh(): void {
@@ -145,7 +161,9 @@ export function createGameStore(options: GameStoreOptions = {}): GameStore {
         played: false,
         recorded: false,
         elapsedBaseMs: 0,
-        runningSince: now(),
+        runningSince: null,
+        clockArmed: false,
+        paused: false,
       }
       refresh()
     },
@@ -154,6 +172,7 @@ export function createGameStore(options: GameStoreOptions = {}): GameStore {
       const current = mustSession()
       const result = advance(currentState(current), action)
       if (!result.ok) return result
+      armClock(current)
       current.actionLog.push(action)
       current.states.push(result.state)
       current.played = true
@@ -182,7 +201,9 @@ export function createGameStore(options: GameStoreOptions = {}): GameStore {
       current.actionLog = []
       current.states = [current.states[0]]
       current.elapsedBaseMs = 0
-      current.runningSince = now()
+      // A fresh attempt waits for fresh intent, same as a new deal.
+      current.runningSince = null
+      current.clockArmed = false
       refresh()
     },
 
@@ -201,6 +222,10 @@ export function createGameStore(options: GameStoreOptions = {}): GameStore {
       // The replaced session's deal still gets its one record, exactly as
       // in start().
       if (session !== null) recordIfDealEnds(session, 'loss')
+      // A save that carries moves or time in THIS attempt was an intended
+      // game; one saved before any intent (including right after a
+      // restart, whose sticky played flag survives) resumes still waiting.
+      const clockArmed = saved.actionLog.length > 0 || saved.elapsedMs > 0
       session = {
         seed: saved.seed,
         actionLog: [...saved.actionLog],
@@ -211,14 +236,24 @@ export function createGameStore(options: GameStoreOptions = {}): GameStore {
         // mis-recorded as a loss when the next deal starts.
         recorded: saved.recorded || isWon(states[states.length - 1]),
         elapsedBaseMs: saved.elapsedMs,
-        runningSince: now(),
+        runningSince: clockArmed ? now() : null,
+        clockArmed,
+        paused: false,
       }
       refresh()
       return true
     },
 
+    startClock() {
+      const current = mustSession()
+      if (current.clockArmed) return
+      armClock(current)
+      refresh()
+    },
+
     pause() {
       const current = mustSession()
+      current.paused = true
       if (current.runningSince === null) return
       current.elapsedBaseMs += Math.max(0, now() - current.runningSince)
       current.runningSince = null
@@ -227,7 +262,8 @@ export function createGameStore(options: GameStoreOptions = {}): GameStore {
 
     resume() {
       const current = mustSession()
-      if (current.runningSince !== null) return
+      current.paused = false
+      if (!current.clockArmed || current.runningSince !== null) return
       current.runningSince = now()
       refresh()
     },

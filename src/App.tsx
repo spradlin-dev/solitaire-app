@@ -139,8 +139,9 @@ export default function App() {
 
   // The clock runs only while the player can actually act on the board:
   // tab visible, window focused, pause menu closed. pause/resume are
-  // idempotent, so re-evaluating the whole predicate on every event is
-  // safe regardless of how the events interleave.
+  // idempotent and arming respects the store's paused flag, so
+  // re-evaluating the whole predicate on every event is safe regardless
+  // of how the events interleave with the first move or hint.
   useEffect(() => {
     const sync = () => {
       if (document.hidden || !document.hasFocus() || menuOpen) store.pause()
@@ -193,6 +194,9 @@ export default function App() {
   }
 
   const onHint = () => {
+    // Asking for a hint is intent: the clock starts even if the answer
+    // turns out to be "game over".
+    store.startClock()
     const current = store.getSnapshot()
     // Etiquette, not truth: the loss may be provable earlier, but the
     // player gets one full fruitless pass through the stock first.

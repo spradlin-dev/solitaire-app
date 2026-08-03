@@ -169,7 +169,8 @@ read state and emit primitive engine actions.
   is started first. A proven loss shows the message but does not lock the game or write
   a record — the player may undo out of the dead end and still win.
   Restarting the same deal (a toolbar action) replays its seed from move zero with a
-  fresh clock and move count: no record is written and the sticky `played` flag
+  fresh clock (armed again only by fresh intent; section 5.3) and move count: no
+  record is written and the sticky `played` flag
   survives (the deal was still played); the undo history goes with the log, so a
   restart cannot itself be undone.
 
@@ -179,7 +180,9 @@ read state and emit primitive engine actions.
   available, menu), a pause menu holding the session actions (new game, restart
   deal, share deal, stats, next-deal draw mode), and the win/lose overlays.
 - The clock runs only while the player can act: it pauses while the tab is
-  hidden, the window is unfocused, or the pause menu is open.
+  hidden, the window is unfocused, or the pause menu is open. It does not
+  start at all until the player first signals intent — a move or a hint
+  request — and a restarted deal waits for fresh intent the same way.
 - A win celebrates with a full-viewport fireworks layer stacked behind the win
   dialog (fireworks-js).
 - The table is a pixi.js canvas. **Honest reuse scope** (verified against gin's code):

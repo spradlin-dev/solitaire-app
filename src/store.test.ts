@@ -202,6 +202,7 @@ test('elapsed time accumulates across pause and resume, and stamps the win', () 
   const results: DealResult[] = []
   const store = createGameStore({ deal: nearWinDeal, now: () => t, onDealEnd: (result) => results.push(result) })
   store.start(1, { drawCount: 3 })
+  store.startClock()
   t = 1500
   store.pause()
   expect(store.getSnapshot().elapsedMs).toBe(500)
@@ -217,6 +218,7 @@ test('a backwards clock step cannot shrink elapsed time or record a negative win
   const results: DealResult[] = []
   const store = createGameStore({ deal: nearWinDeal, now: () => t, onDealEnd: (result) => results.push(result) })
   store.start(1, { drawCount: 3 })
+  store.startClock()
   t = 5_000
   store.pause()
   expect(store.getSnapshot().elapsedMs).toBe(0)
@@ -230,11 +232,124 @@ test('getElapsedMs reads live without mutating the store', () => {
   let t = 1000
   const store = createGameStore({ now: () => t })
   store.start(42, { drawCount: 3 })
+  store.startClock()
   const snapshotBefore = store.getSnapshot()
   t = 1500
   expect(store.getElapsedMs()).toBe(500)
   // The frozen snapshot is untouched and no notification fired.
   expect(store.getSnapshot()).toBe(snapshotBefore)
+})
+
+test('the clock waits for intent: resume cannot start it, the first action does', () => {
+  let t = 1000
+  const store = createGameStore({ now: () => t })
+  store.start(42, { drawCount: 3 })
+  // The visibility sync calls resume on every focus event; before intent
+  // it must not start the clock.
+  store.resume()
+  t = 5000
+  expect(store.getElapsedMs()).toBe(0)
+  store.apply({ type: 'draw' })
+  t = 7000
+  expect(store.getElapsedMs()).toBe(2000)
+})
+
+test('a hint request arms the clock exactly once', () => {
+  let t = 1000
+  const store = createGameStore({ now: () => t })
+  store.start(42, { drawCount: 3 })
+  store.startClock()
+  t = 1400
+  expect(store.getElapsedMs()).toBe(400)
+  // A second hint must not reset the running clock.
+  store.startClock()
+  t = 1900
+  expect(store.getElapsedMs()).toBe(900)
+})
+
+test('restart waits for fresh intent before the clock runs again', () => {
+  let t = 1000
+  const store = createGameStore({ now: () => t })
+  store.start(42, { drawCount: 3 })
+  store.apply({ type: 'draw' })
+  t = 3000
+  store.restart()
+  expect(store.getElapsedMs()).toBe(0)
+  store.resume()
+  t = 9000
+  expect(store.getElapsedMs()).toBe(0)
+  store.apply({ type: 'draw' })
+  t = 9500
+  expect(store.getElapsedMs()).toBe(500)
+})
+
+test('a restarted deal reloads with the clock still waiting for intent', () => {
+  let t = 1000
+  const store = createGameStore({ now: () => t })
+  store.start(42, { drawCount: 3 })
+  store.apply({ type: 'draw' })
+  t = 3000
+  store.restart()
+  // What the save subscriber would persist right after the restart: the
+  // sticky played latch survives with an empty log and zero elapsed.
+  const restored = createGameStore({ now: () => t })
+  expect(
+    restored.hydrate(hydrateInput({ seed: 42, config: { drawCount: 3 }, actionLog: [], played: true, elapsedMs: 0 })),
+  ).toBe(true)
+  restored.resume()
+  t = 9000
+  expect(restored.getElapsedMs()).toBe(0)
+  restored.apply({ type: 'draw' })
+  t = 9400
+  expect(restored.getElapsedMs()).toBe(400)
+})
+
+test('a save with accumulated time but no moves hydrates with the clock running', () => {
+  // The hint-armed-then-closed shape: no actions yet, but time was spent.
+  let t = 1000
+  const store = createGameStore({ now: () => t })
+  expect(
+    store.hydrate(hydrateInput({ seed: 42, config: { drawCount: 3 }, actionLog: [], played: false, elapsedMs: 5000 })),
+  ).toBe(true)
+  t = 1600
+  expect(store.getElapsedMs()).toBe(5600)
+})
+
+test('intent while paused arms the clock without running it', () => {
+  let t = 1000
+  const store = createGameStore({ now: () => t })
+  store.start(42, { drawCount: 3 })
+  // The pause menu is open when the player asks for a hint.
+  store.pause()
+  store.startClock()
+  t = 4000
+  expect(store.getElapsedMs()).toBe(0)
+  store.resume()
+  t = 4900
+  expect(store.getElapsedMs()).toBe(900)
+})
+
+test('a rejected action is not intent: the clock stays at zero', () => {
+  let t = 1000
+  const store = createGameStore({ now: () => t })
+  store.start(42, { drawCount: 3 })
+  expect(store.apply({ type: 'recycle' }).ok).toBe(false)
+  t = 5000
+  expect(store.getElapsedMs()).toBe(0)
+})
+
+test('a save from before any intent hydrates with the clock still waiting', () => {
+  let t = 1000
+  const store = createGameStore({ now: () => t })
+  expect(
+    store.hydrate(hydrateInput({ seed: 42, config: { drawCount: 3 }, actionLog: [], played: false, elapsedMs: 0 })),
+  ).toBe(true)
+  store.resume()
+  t = 4000
+  expect(store.getElapsedMs()).toBe(0)
+  store.apply({ type: 'draw' })
+  t = 4600
+  expect(store.getElapsedMs()).toBe(600)
 })
 
 test('hydrate rebuilds the undo stack from the log and keeps the saved config', () => {
