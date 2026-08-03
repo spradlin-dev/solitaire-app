@@ -1,7 +1,7 @@
 import { Application, Assets, Container, Graphics, Sprite, Text } from 'pixi.js'
 import type { FederatedPointerEvent, Texture } from 'pixi.js'
 import { cardAssetUrl } from '../cardAssets.ts'
-import { cardRect, computeLayout, dropTargetAt, pileCardY, wasteFanX } from './layout.ts'
+import { cardRect, computeLayout, dropTargetAt, pileCardY, wasteFanPos } from './layout.ts'
 import type { Point, Rect, TableLayout } from './layout.ts'
 import { newDeck } from '../engine/deck.ts'
 import { SUITS, cardKey } from '../engine/cards.ts'
@@ -261,7 +261,9 @@ export async function createTableScene(app: Application, handlers: SceneHandlers
   // foundations 200+, tableau 300 + column * 40 (a column holds at most 19
   // cards: 6 face-down plus a 13-card run, so the stride never overflows;
   // max 558), in-flight tweens LIFT_Z + final z (610-1158), dragged run
-  // DRAG_Z+, hint overlay 2000.
+  // DRAG_Z+, hint overlay 2000. The bands assume resting zones never
+  // overlap on screen — in the side-rail layout that is a horizontal
+  // guarantee owned by layout.ts.
   function place(card: Card, target: Point, faceUp: boolean, zIndex: number, placeInfo: CardPlace, instant: boolean): void {
     const node = nodes.get(cardKey(card))!
     places.set(cardKey(card), placeInfo)
@@ -292,7 +294,7 @@ export async function createTableScene(app: Application, handlers: SceneHandlers
       const top = index === state.waste.length - 1
       place(
         card,
-        { x: wasteFanX(layout, index, state.waste.length, state.config.drawCount), y: layout.waste.y },
+        wasteFanPos(layout, index, state.waste.length, state.config.drawCount),
         true,
         100 + index,
         { zone: { kind: 'waste' }, pileIndex: index, faceUpIndex: -1, draggable: top },

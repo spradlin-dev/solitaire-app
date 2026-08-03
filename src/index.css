@@ -121,6 +121,16 @@ button:disabled {
   pointer-events: none;
 }
 
+/* On short (landscape) screens the tableau starts at the very top, so
+   banners anchor to the bottom instead of covering every column's first
+   card. */
+@media (max-height: 520px) {
+  .banner-stack {
+    top: auto;
+    bottom: 12px;
+  }
+}
+
 .banner {
   background: #7a3030;
   padding: 10px 16px;

@@ -195,6 +195,10 @@ read state and emit primitive engine actions.
   also a new asset (the Knoll SVG set has none; gin generated one with `Graphics`).
 - Table background: solid `#3A5D6F` (RGB 58, 93, 111) — matched to the camera
   background color in the sibling Unity project `solitaire-sample-project`.
+- Short landscape screens swap topology: the top row moves to side rails
+  (stock/waste stacked left, foundations in a 2x2 grid right) so the tableau
+  gets the full height and cards stay big; the rail layout is used only when
+  it actually yields bigger cards than the top-row layout would.
 - Interactions: drag-and-drop plus tap. Double-click/tap = auto-move (foundation
   first, else leftmost legal tableau spot; tapping mid-run moves the run from that
   card down).

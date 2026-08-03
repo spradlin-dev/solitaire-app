@@ -19,6 +19,18 @@ export const COMPACT_WIDTH = 700
 // window crosses a single pixel of height.
 export const BUDGET_FULL_HEIGHT = 800
 const BUDGET_SHORT_HEIGHT = 400
+// Below this height a landscape canvas may swap topology: the top row
+// moves to side rails (stock/waste left, foundations in a 2x2 block
+// right) so the tableau gets the full height. The rail layout is used
+// only when it actually yields bigger cards than the top-row layout.
+export const SIDE_RAIL_HEIGHT = 520
+// Side-rail spacing, in card units: rail-to-tableau gap (widths), the
+// vertical gap between rail cards (heights), and the waste's downward
+// fan step (heights — shows the buried cards' rank corner).
+const RAIL_GAP = 0.3
+const RAIL_STACK_GAP = 0.12
+const RAIL_FAN_STEP = 0.24
+const FOUNDATION_GRID_GAP = 0.08
 
 // In card-WIDTH units: [desktop, compact].
 const COLUMN_GAP = [0.22, 0.08] as const
@@ -54,30 +66,42 @@ export interface TableLayout {
   readonly waste: Point
   readonly foundations: Readonly<Record<Suit, Point>>
   readonly columnXs: readonly number[]
-  // Bottom edge of the stock/waste/foundation row: tableau drops resolve
-  // only below this line, so a card dropped back onto the waste can never
-  // silently play to a column.
-  readonly topRowBottom: number
+  // Tableau drops resolve only below this line. Under the top row it is
+  // the row's bottom edge, so a card dropped back onto the waste can
+  // never silently play to a column; on side rails the columns start at
+  // the top and this is only a sliver — there the stock, waste, and
+  // foundations stay out of the drop bands horizontally instead.
+  readonly tableauDropTop: number
   readonly tableauTop: number
   readonly faceDownOffset: number
   readonly faceUpOffset: number
   // Half the column pitch: bands tile the tableau exactly.
   readonly columnBandHalfWidth: number
-  // Horizontal step of the draw-3 waste fan; it extends into the unused
-  // slot between the waste and the foundations.
-  readonly wasteFanOffset: number
+  // Waste fan step per fanned card: rightward under the top row,
+  // downward on the side rail.
+  readonly wasteFanDx: number
+  readonly wasteFanDy: number
   // Vertical room below tableauTop for a column's overlap offsets; a
   // column whose natural extent exceeds it compresses (pileCardY).
   readonly tableauSpan: number
+  // True when the top row lives on side rails (short landscape screens).
+  readonly sideRail: boolean
 }
 
-export function computeLayout(width: number, height: number): TableLayout {
-  const hMode = width < COMPACT_WIDTH ? 1 : 0
+// The shared height interpolation (see BUDGET_FULL_HEIGHT above).
+function verticalTuning(height: number): { columnBudget: number; topMargin: number; rowGap: number } {
   const tall = Math.min(1, Math.max(0, (height - BUDGET_SHORT_HEIGHT) / (BUDGET_FULL_HEIGHT - BUDGET_SHORT_HEIGHT)))
-  const columnBudget = SHORT_COLUMN_HEIGHTS + (MAX_COLUMN_HEIGHTS - SHORT_COLUMN_HEIGHTS) * tall
+  return {
+    columnBudget: SHORT_COLUMN_HEIGHTS + (MAX_COLUMN_HEIGHTS - SHORT_COLUMN_HEIGHTS) * tall,
+    topMargin: TOP_MARGIN[1] + (TOP_MARGIN[0] - TOP_MARGIN[1]) * tall,
+    rowGap: ROW_GAP[1] + (ROW_GAP[0] - ROW_GAP[1]) * tall,
+  }
+}
+
+function topRowLayout(width: number, height: number): TableLayout {
+  const hMode = width < COMPACT_WIDTH ? 1 : 0
+  const { columnBudget, topMargin, rowGap } = verticalTuning(height)
   const columnGap = COLUMN_GAP[hMode]
-  const topMargin = TOP_MARGIN[1] + (TOP_MARGIN[0] - TOP_MARGIN[1]) * tall
-  const rowGap = ROW_GAP[1] + (ROW_GAP[0] - ROW_GAP[1]) * tall
   const widthInCards = 7 + 6 * columnGap + 2 * EDGE[hMode]
   const heightInCards = (topMargin + 1 + rowGap + columnBudget + topMargin) * CARD_RATIO
   const cardWidth = Math.min(width / widthInCards, height / heightInCards)
@@ -99,25 +123,98 @@ export function computeLayout(width: number, height: number): TableLayout {
     waste: { x: columnXs[1], y: topRowY },
     foundations,
     columnXs,
-    topRowBottom: topRowY + cardHeight / 2,
+    tableauDropTop: topRowY + cardHeight / 2,
     tableauTop,
     faceDownOffset: cardHeight * FACE_DOWN_OFFSET,
     faceUpOffset: cardHeight * FACE_UP_OFFSET,
     columnBandHalfWidth: (cardWidth + gap) / 2,
-    wasteFanOffset: cardWidth * 0.28,
+    wasteFanDx: cardWidth * 0.28,
+    wasteFanDy: 0,
     // At least (columnBudget - 1) card-heights by construction: exactly
     // the room the sizing formula reserved below the first card.
     tableauSpan: height - tableauTop - cardHeight / 2 - cardHeight * topMargin,
+    sideRail: false,
   }
 }
 
-// Center x of a waste card. Draw 3 fans the last three cards rightward —
-// the buried two peek out partially covered, so it is visible that only
-// the top card can play. Draw 1 keeps a single stack.
-export function wasteFanX(layout: TableLayout, index: number, wasteLength: number, drawCount: 1 | 3): number {
+function sideRailLayout(width: number, height: number): TableLayout {
+  const { columnBudget, topMargin } = verticalTuning(height)
+  // Rails always use the compact horizontal chrome: a short screen never
+  // has width to burn on desktop gutters.
+  const columnGap = COLUMN_GAP[1]
+  const widthInCards =
+    2 * EDGE[1] + 1 + RAIL_GAP + 7 + 6 * columnGap + RAIL_GAP + 2 + FOUNDATION_GRID_GAP
+  // No top row above the tableau: the first card plus the column budget
+  // is the whole vertical story.
+  const heightInCards = (topMargin + columnBudget + topMargin) * CARD_RATIO
+  const cardWidth = Math.min(width / widthInCards, height / heightInCards)
+  const cardHeight = cardWidth * CARD_RATIO
+  const gap = cardWidth * columnGap
+  // A wide-but-short canvas would otherwise pool all its slack into one
+  // gulf between the tableau and the foundations: each rail gap may grow
+  // by up to a card-width, and the rest centers the whole assembly.
+  const slack = Math.max(0, width - widthInCards * cardWidth)
+  const gapGrow = Math.min(slack / 2, cardWidth)
+  const shift = (slack - 2 * gapGrow) / 2
+  const railTopY = cardHeight * topMargin + cardHeight / 2
+  const leftRailX = shift + (EDGE[1] + 0.5) * cardWidth
+  const tableauLeft = shift + (EDGE[1] + 1 + RAIL_GAP) * cardWidth + gapGrow
+  const columnXs = Array.from({ length: 7 }, (_, index) => tableauLeft + cardWidth / 2 + index * (cardWidth + gap))
+  const gridX0 = width - shift - (EDGE[1] + 2 + FOUNDATION_GRID_GAP) * cardWidth + cardWidth / 2
+  const gridX1 = gridX0 + (1 + FOUNDATION_GRID_GAP) * cardWidth
+  const gridY1 = railTopY + (1 + RAIL_STACK_GAP) * cardHeight
+  const foundations = {} as Record<Suit, Point>
+  const gridSpots = [
+    { x: gridX0, y: railTopY },
+    { x: gridX1, y: railTopY },
+    { x: gridX0, y: gridY1 },
+    { x: gridX1, y: gridY1 },
+  ]
+  SUITS.forEach((suit, index) => {
+    foundations[suit] = gridSpots[index]
+  })
+  const tableauTop = railTopY
+  return {
+    cardWidth,
+    cardHeight,
+    stock: { x: leftRailX, y: railTopY },
+    waste: { x: leftRailX, y: railTopY + (1 + RAIL_STACK_GAP) * cardHeight },
+    foundations,
+    columnXs,
+    // Nothing sits above the columns; only a sliver above the first card
+    // is dead space for drops.
+    tableauDropTop: tableauTop - cardHeight / 2 - cardHeight * 0.06,
+    tableauTop,
+    faceDownOffset: cardHeight * FACE_DOWN_OFFSET,
+    faceUpOffset: cardHeight * FACE_UP_OFFSET,
+    columnBandHalfWidth: (cardWidth + gap) / 2,
+    wasteFanDx: 0,
+    wasteFanDy: cardHeight * RAIL_FAN_STEP,
+    tableauSpan: height - tableauTop - cardHeight / 2 - cardHeight * topMargin,
+    sideRail: true,
+  }
+}
+
+export function computeLayout(width: number, height: number): TableLayout {
+  const topRow = topRowLayout(width, height)
+  if (height >= SIDE_RAIL_HEIGHT) return topRow
+  const rail = sideRailLayout(width, height)
+  // The rail must EARN the swap: rearranging the whole board for a sliver
+  // of card size would churn the topology on a one-pixel resize.
+  return rail.cardWidth > topRow.cardWidth * 1.08 ? rail : topRow
+}
+
+// Center of a waste card. Draw 3 fans the last three cards along the
+// layout's fan direction (rightward under the top row, downward on the
+// side rail) — the buried two peek out partially covered, so it is
+// visible that only the top card can play. Draw 1 keeps a single stack.
+export function wasteFanPos(layout: TableLayout, index: number, wasteLength: number, drawCount: 1 | 3): Point {
   const fanned = Math.min(drawCount === 3 ? 3 : 1, wasteLength)
-  const fanIndex = index - (wasteLength - fanned)
-  return layout.waste.x + Math.max(0, fanIndex) * layout.wasteFanOffset
+  const fanIndex = Math.max(0, index - (wasteLength - fanned))
+  return {
+    x: layout.waste.x + fanIndex * layout.wasteFanDx,
+    y: layout.waste.y + fanIndex * layout.wasteFanDy,
+  }
 }
 
 // The column's card counts, passed as one unit so they can never be
@@ -172,15 +269,15 @@ export function inRect(point: Point, rect: Rect): boolean {
 }
 
 // Drop resolution: a point over a foundation rect targets that foundation;
-// otherwise a point inside a column's x-band below the top row targets that
-// column. Returns null when the point is over nothing droppable.
+// otherwise a point inside a column's x-band below tableauDropTop targets
+// that column. Returns null when the point is over nothing droppable.
 export type DropTarget = { readonly kind: 'foundation'; readonly suit: Suit } | { readonly kind: 'tableau'; readonly index: number }
 
 export function dropTargetAt(layout: TableLayout, point: Point): DropTarget | null {
   for (const suit of SUITS) {
     if (inRect(point, foundationRect(layout, suit))) return { kind: 'foundation', suit }
   }
-  if (point.y > layout.topRowBottom) {
+  if (point.y > layout.tableauDropTop) {
     for (let index = 0; index < 7; index++) {
       if (Math.abs(point.x - layout.columnXs[index]) <= layout.columnBandHalfWidth) {
         return { kind: 'tableau', index }
