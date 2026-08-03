@@ -316,6 +316,7 @@ export default function App() {
           {lost && !snapshot.won && (
             <div className="banner">
               Game over — no winning line exists from here. Undo to try another path, or deal again.
+              <button onClick={() => newGame(settings.drawCount)}>New game</button>
               <button onClick={() => setLost(false)}>Dismiss</button>
             </div>
           )}
