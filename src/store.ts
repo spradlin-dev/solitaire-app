@@ -22,6 +22,7 @@ export interface GameSnapshot {
   readonly canUndo: boolean
   readonly played: boolean
   readonly recorded: boolean
+  readonly resigned: boolean
   readonly won: boolean
   readonly elapsedMs: number
 }
@@ -33,6 +34,7 @@ export interface HydrateInput {
   readonly elapsedMs: number
   readonly played: boolean
   readonly recorded: boolean
+  readonly resigned: boolean
 }
 
 export interface GameStoreOptions {
@@ -50,6 +52,11 @@ export interface GameStore {
   undo(): boolean
   restart(): void
   hydrate(saved: HydrateInput): boolean
+  // Resigns the deal (the Solve button, DESIGN.md section 12): records
+  // its one loss immediately — even from move zero — and latches the
+  // sticky resigned flag that swaps the win dialog for a "solved" notice.
+  // Irreversible: undo does not un-resign.
+  resign(): void
   // Starts the clock without a move; the caller decides what counts as
   // a signal of intent.
   startClock(): void
@@ -75,6 +82,9 @@ interface GameSession {
   // pause menu) arms without running: running = armed and not paused.
   clockArmed: boolean
   paused: boolean
+  // Sticky like played/recorded: survives undo and restart, so a
+  // resigned deal can never celebrate a win it did not earn.
+  resigned: boolean
 }
 
 export function createGameStore(options: GameStoreOptions = {}): GameStore {
@@ -120,6 +130,7 @@ export function createGameStore(options: GameStoreOptions = {}): GameStore {
       canUndo: current.actionLog.length > 0,
       played: current.played,
       recorded: current.recorded,
+      resigned: current.resigned,
       won: isWon(state),
       elapsedMs: elapsedMs(current),
     }
@@ -160,6 +171,7 @@ export function createGameStore(options: GameStoreOptions = {}): GameStore {
         states: [deal(seed, config)],
         played: false,
         recorded: false,
+        resigned: false,
         elapsedBaseMs: 0,
         runningSince: null,
         clockArmed: false,
@@ -235,6 +247,10 @@ export function createGameStore(options: GameStoreOptions = {}): GameStore {
         // resurrect an already-won game as unrecorded, or its win would be
         // mis-recorded as a loss when the next deal starts.
         recorded: saved.recorded || isWon(states[states.length - 1]),
+        // Reconciled like recorded: resignation implies a recorded deal,
+        // so a malformed input cannot suppress the win dialog while
+        // leaving the win recordable.
+        resigned: saved.resigned && saved.recorded,
         elapsedBaseMs: saved.elapsedMs,
         runningSince: clockArmed ? now() : null,
         clockArmed,
@@ -242,6 +258,17 @@ export function createGameStore(options: GameStoreOptions = {}): GameStore {
       }
       refresh()
       return true
+    },
+
+    resign() {
+      const current = mustSession()
+      if (current.resigned) return
+      current.resigned = true
+      // Resigning counts as having played: a deal handed to the machine
+      // at move zero still records its one loss.
+      current.played = true
+      recordIfDealEnds(current, 'loss')
+      refresh()
     },
 
     startClock() {

@@ -13,6 +13,9 @@ import { loadSettings, saveSettings } from './settings.ts'
 import { chooseBoot } from './boot.ts'
 import { formatDealFragment } from './dealLink.ts'
 import { scheduleSwUpdateChecks } from './pwaUpdate.ts'
+import { positionKey } from './engine/solver.ts'
+import type { KlondikeAction } from './engine/klondike.ts'
+import type { SolverWorkerReply } from './solverWorker.ts'
 
 // The module-level bootstrap below runs once per page; a hot update would
 // re-run it and orphan a live store, so reload outright (same rule as
@@ -56,6 +59,7 @@ store.subscribe(() => {
     elapsedMs: store.getElapsedMs(),
     played: snapshot.played,
     recorded: snapshot.recorded,
+    resigned: snapshot.resigned,
   })
   requestDurableStorageOnce(snapshot.played)
 })
@@ -101,6 +105,8 @@ export default function App() {
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null)
   const [lost, setLost] = useState(false)
   const [finishing, setFinishing] = useState(false)
+  const [solving, setSolving] = useState(false)
+  const solverRef = useRef<Worker | null>(null)
   const [tableBroken, setTableBroken] = useState(false)
   const [clock, setClock] = useState(0)
   const sceneRef = useRef<TableScene | null>(null)
@@ -189,6 +195,7 @@ export default function App() {
 
   const newGame = (drawCount: 1 | 3) => {
     stopFinishing()
+    stopSolving()
     setLost(false)
     store.start(randomSeed(), { drawCount })
   }
@@ -220,8 +227,9 @@ export default function App() {
     store.restart()
   }
 
-  const onAutoFinish = () => {
-    const actions = autoFinishActions(store.getSnapshot().state)
+  // The shared timed-apply loop: auto-finish and solver playback both run
+  // through it (input latch, generation counter, one action per beat).
+  const playActions = (actions: readonly KlondikeAction[]) => {
     const run = ++finishRun.current
     finishingRef.current = true
     setFinishing(true)
@@ -242,6 +250,59 @@ export default function App() {
     }
     step()
   }
+
+  const onAutoFinish = () => playActions(autoFinishActions(store.getSnapshot().state))
+
+  const stopSolving = () => {
+    solverRef.current?.terminate()
+    solverRef.current = null
+    setSolving(false)
+  }
+
+  // Solve resigns first (DESIGN.md section 12), then searches off the
+  // main thread. Two guards on every reply: worker identity (only the
+  // current search may act — a terminated worker's queued message can
+  // still arrive) and the position stamp (the player moved mid-search
+  // means the result is dropped).
+  const onSolve = () => {
+    setMenuOpen(false)
+    store.resign()
+    stopSolving()
+    const submitted = store.getSnapshot().state
+    const worker = new Worker(new URL('./solverWorker.ts', import.meta.url), { type: 'module' })
+    solverRef.current = worker
+    setSolving(true)
+    showToast('Solving…')
+    worker.onmessage = (event: MessageEvent<SolverWorkerReply>) => {
+      if (solverRef.current !== worker) {
+        worker.terminate()
+        return
+      }
+      stopSolving()
+      const reply = event.data
+      if (reply.key !== positionKey(store.getSnapshot().state)) return
+      if (reply.outcome === 'won') {
+        playActions(reply.line)
+      } else if (reply.outcome === 'unwinnable') {
+        setLost(true)
+      } else {
+        showToast('The solver could not decide within its budget.')
+      }
+    }
+    worker.onerror = () => {
+      if (solverRef.current !== worker) {
+        worker.terminate()
+        return
+      }
+      stopSolving()
+      showToast('The solver hit an error.')
+    }
+    worker.postMessage({ state: submitted })
+  }
+
+  // A worker left searching an abandoned page would burn CPU with nobody
+  // listening.
+  useEffect(() => () => solverRef.current?.terminate(), [])
 
   const onShare = () => {
     const link = `${window.location.origin}${window.location.pathname}${formatDealFragment({
@@ -283,6 +344,7 @@ export default function App() {
             Hint
           </button>
           {canFinish && <button onClick={onAutoFinish}>Auto-finish</button>}
+          {finishing && <button onClick={stopFinishing}>Stop</button>}
           <button
             onClick={() => {
               setMenuView('actions')
@@ -320,6 +382,13 @@ export default function App() {
               <button onClick={() => setLost(false)}>Dismiss</button>
             </div>
           )}
+          {solving && <div className="banner info">Solving…</div>}
+          {snapshot.won && snapshot.resigned && !finishing && (
+            <div className="banner info">
+              Solved — this one was resigned.
+              <button onClick={() => newGame(settings.drawCount)}>New game</button>
+            </div>
+          )}
           {needRefresh && (
             <div className="banner info">
               Update ready — reload to apply. Your game is saved.
@@ -328,8 +397,8 @@ export default function App() {
             </div>
           )}
         </div>
-        {snapshot.won && <WinFireworks />}
-        {snapshot.won && (
+        {snapshot.won && !snapshot.resigned && <WinFireworks />}
+        {snapshot.won && !snapshot.resigned && (
           <div className="overlay">
             <div className="dialog">
               <h2>You won!</h2>
@@ -366,6 +435,11 @@ export default function App() {
                   </button>
                   <button onClick={onShare}>Share deal</button>
                   <button onClick={() => setMenuView('stats')}>Stats</button>
+                  {typeof Worker !== 'undefined' && (
+                    <button onClick={onSolve} disabled={snapshot.won || solving}>
+                      Solve
+                    </button>
+                  )}
                   <label className="mode">
                     Next deal:
                     <select

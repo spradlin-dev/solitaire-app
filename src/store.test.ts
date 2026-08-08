@@ -6,7 +6,7 @@ import { advance, initialState, legalActions } from './engine/klondike.ts'
 import { WINNING_MOVE, nearWinDeal } from './engine/testState.ts'
 
 function hydrateInput(partial: Partial<HydrateInput> & Pick<HydrateInput, 'seed' | 'config' | 'actionLog'>): HydrateInput {
-  return { elapsedMs: 0, played: true, recorded: false, ...partial }
+  return { elapsedMs: 0, played: true, recorded: false, resigned: false, ...partial }
 }
 
 test('the store refuses snapshots and actions before a game exists', () => {
@@ -336,6 +336,65 @@ test('a rejected action is not intent: the clock stays at zero', () => {
   expect(store.apply({ type: 'recycle' }).ok).toBe(false)
   t = 5000
   expect(store.getElapsedMs()).toBe(0)
+})
+
+test('resigning a move-zero deal records one loss, and the machine win cannot double-record', () => {
+  const results: DealResult[] = []
+  const store = createGameStore({ deal: nearWinDeal, onDealEnd: (result) => results.push(result) })
+  store.start(1, { drawCount: 3 })
+  // No human move has landed: played is false, which used to make a
+  // mid-deal loss silently unrecordable.
+  store.resign()
+  expect(results).toHaveLength(1)
+  expect(results[0]).toMatchObject({ outcome: 'loss' })
+  expect(store.getSnapshot().resigned).toBe(true)
+  // The machine plays the winning line; the sticky recorded latch must
+  // swallow the win record.
+  store.apply(WINNING_MOVE)
+  expect(store.getSnapshot().won).toBe(true)
+  expect(results).toHaveLength(1)
+  // Resigning twice is a no-op.
+  store.resign()
+  expect(results).toHaveLength(1)
+})
+
+test('resigning after a recorded win keeps the win: one record per deal outranks the loss', () => {
+  const results: DealResult[] = []
+  const store = createGameStore({ deal: nearWinDeal, onDealEnd: (result) => results.push(result) })
+  store.start(1, { drawCount: 3 })
+  store.apply(WINNING_MOVE)
+  expect(results).toMatchObject([{ outcome: 'win' }])
+  store.undo()
+  store.resign()
+  expect(store.getSnapshot().resigned).toBe(true)
+  // The recorded latch already spent this deal's one record on the win;
+  // resigning must not add a loss on top.
+  expect(results).toHaveLength(1)
+})
+
+test('resignation is sticky across undo and restart, and round-trips a save', () => {
+  const store = createGameStore()
+  store.start(42, { drawCount: 3 })
+  store.apply({ type: 'draw' })
+  store.resign()
+  store.undo()
+  expect(store.getSnapshot().resigned).toBe(true)
+  store.restart()
+  expect(store.getSnapshot().resigned).toBe(true)
+  const saved = store.getSnapshot()
+  const restored = createGameStore()
+  expect(
+    restored.hydrate(
+      hydrateInput({
+        seed: 42,
+        config: saved.config,
+        actionLog: saved.actionLog,
+        recorded: true,
+        resigned: true,
+      }),
+    ),
+  ).toBe(true)
+  expect(restored.getSnapshot().resigned).toBe(true)
 })
 
 test('a save from before any intent hydrates with the clock still waiting', () => {

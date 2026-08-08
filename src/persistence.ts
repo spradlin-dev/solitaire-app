@@ -24,6 +24,9 @@ export interface SavedGame {
   readonly elapsedMs: number
   readonly played: boolean
   readonly recorded: boolean
+  // Saves written before the solver existed lack this field; they load
+  // as not-resigned rather than being discarded.
+  readonly resigned: boolean
 }
 
 export function saveGame(storage: StorageLike, game: SavedGame): void {
@@ -86,10 +89,13 @@ export function loadGame(storage: StorageLike): SavedGame | null {
     blob.elapsedMs >= 0 &&
     typeof blob.played === 'boolean' &&
     typeof blob.recorded === 'boolean' &&
+    (blob.resigned === undefined || typeof blob.resigned === 'boolean') &&
     // Cross-field consistency the real store always maintains: a deal with
-    // actions was played, and only a played deal can have been recorded.
+    // actions was played, only a played deal can have been recorded, and
+    // resigning always marks the deal played and recorded.
     (blob.actionLog.length === 0 || blob.played === true) &&
-    (blob.recorded !== true || blob.played === true)
+    (blob.recorded !== true || blob.played === true) &&
+    (blob.resigned !== true || (blob.played === true && blob.recorded === true))
   if (!valid) {
     clearGame(storage)
     return null
@@ -101,5 +107,6 @@ export function loadGame(storage: StorageLike): SavedGame | null {
     elapsedMs: blob.elapsedMs as number,
     played: blob.played as boolean,
     recorded: blob.recorded as boolean,
+    resigned: blob.resigned === true,
   }
 }

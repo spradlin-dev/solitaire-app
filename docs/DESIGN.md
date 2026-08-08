@@ -428,10 +428,14 @@ folded into sections 2, 5.3, and 8.
   that marks it played and recorded and writes one loss atomically —
   so a deal solved from move zero still records a loss, and the win at
   the end of playback cannot double-record (the sticky latch already
-  guarantees this). Resigning is irreversible: undoing the machine's
+  guarantees this) — unless the deal already recorded (a win that was
+  undone, then resigned, keeps its win: one record per deal outranks the
+  resignation). Resigning is irreversible: undoing the machine's
   line does not un-resign, and a later hand-played win of the resigned
   deal records nothing. A sticky `resigned` flag rides the snapshot and
-  the save blob (schema bump), and while it is set the win overlay and
+  the save blob (an optional field on the save format; saves from before
+  the solver load as not-resigned — a version bump would have discarded
+  every in-progress game), and while it is set the win overlay and
   fireworks are replaced by a quiet "solved" notice — after reload too,
   and also if the player undoes and re-finishes by hand. A solver
   `unwinnable` shows the game-over banner immediately: asking the machine

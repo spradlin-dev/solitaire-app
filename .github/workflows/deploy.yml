@@ -39,6 +39,7 @@ jobs:
           grep -q "manifest.webmanifest" dist/index.html || { echo "::error::dist/index.html does not link the web manifest"; exit 1; }
           grep -q 'url:"index.html"' dist/sw.js || { echo "::error::dist/sw.js does not precache index.html - offline navigation would 404"; exit 1; }
           test "$(grep -o 'url:"assets/[^"]*\.svg"' dist/sw.js | wc -l)" -ge 52 || { echo "::error::dist/sw.js precaches fewer than 52 card faces - cards would be missing offline (oversized or excluded assets?)"; exit 1; }
+          grep -q 'url:"assets/solverWorker' dist/sw.js || { echo "::error::the solver worker chunk is not precached (or solverWorker.ts was renamed - update this pattern) - Solve would be the one feature that dies offline"; exit 1; }
       - name: Upload the site as a Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

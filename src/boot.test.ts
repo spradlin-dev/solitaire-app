@@ -9,6 +9,7 @@ const SAVED: SavedGame = {
   elapsedMs: 100,
   played: true,
   recorded: false,
+  resigned: false,
 }
 
 test('a deal link wins, but a saved game is still hydrated first for its loss record', () => {

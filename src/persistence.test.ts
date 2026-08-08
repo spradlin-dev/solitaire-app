@@ -20,8 +20,26 @@ function playedGame() {
     elapsedMs: 9000,
     played: snapshot.played,
     recorded: snapshot.recorded,
+    resigned: snapshot.resigned,
   }
 }
+
+test('a pre-solver save without the resigned field loads as not-resigned', () => {
+  const storage = fakeStorage()
+  const legacy = JSON.parse(validBlob({ played: true, actionLog: [{ type: 'draw' }] }))
+  delete legacy.resigned
+  storage.setItem(GAME_KEY, JSON.stringify(legacy))
+  const loaded = loadGame(storage)
+  expect(loaded).not.toBeNull()
+  expect(loaded!.resigned).toBe(false)
+})
+
+test('a resigned save round-trips', () => {
+  const storage = fakeStorage()
+  const game = { ...playedGame(), recorded: true, resigned: true }
+  saveGame(storage, game)
+  expect(loadGame(storage)).toEqual(game)
+})
 
 function validBlob(overrides: Record<string, unknown>): string {
   return JSON.stringify({
@@ -80,6 +98,7 @@ test('round-trip property: any legally played game survives JSON, including move
           elapsedMs: 1234,
           played: snapshot.played,
           recorded: snapshot.recorded,
+          resigned: snapshot.resigned,
         })
         const loaded = loadGame(storage)
         expect(loaded).not.toBeNull()
@@ -110,6 +129,9 @@ test('damaged saves are discarded and the key removed, leaving other keys alone'
     validBlob({ config: { drawCount: 2 } }),
     validBlob({ actionLog: {} }),
     validBlob({ elapsedMs: -5 }),
+    validBlob({ resigned: 'yes' }),
+    validBlob({ resigned: true, played: false }),
+    validBlob({ resigned: true, played: true, recorded: false }),
     // A raw overflowing literal: JSON.parse reads this as Infinity.
     validBlob({}).replace('"elapsedMs":0', '"elapsedMs":1e999'),
     validBlob({ played: 'yes' }),
@@ -137,6 +159,7 @@ test('a shape-valid save whose log the engine rejects is refused by hydrate with
     elapsedMs: 0,
     played: true,
     recorded: false,
+    resigned: false,
   })
   const loaded = loadGame(storage)
   expect(loaded).not.toBeNull()
