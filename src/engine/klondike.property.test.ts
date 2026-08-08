@@ -1,11 +1,11 @@
 import { expect, test } from 'vitest'
 import fc from 'fast-check'
-import { advance, initialState, legalActions, rankIndex } from './klondike.ts'
+import { MAX_SEED, advance, initialState, legalActions, rankIndex } from './klondike.ts'
 import type { KlondikeAction, KlondikeConfig, KlondikeState, Zone } from './klondike.ts'
 import { SUITS, cardKey } from './cards.ts'
 import type { Suit } from './cards.ts'
 
-const arbSeed = fc.integer({ min: 0, max: 0xffffffff })
+const arbSeed = fc.integer({ min: 0, max: MAX_SEED })
 const arbConfig: fc.Arbitrary<KlondikeConfig> = fc
   .constantFrom<1 | 3>(1, 3)
   .map((drawCount) => ({ drawCount }))
@@ -13,7 +13,7 @@ const arbPicks = fc.array(fc.nat(9999), { minLength: 1, maxLength: 60 })
 
 // Random legal playout: at each step pick one of the currently legal actions.
 // Every visited state is returned, first to last.
-function playout(seed: number, config: KlondikeConfig, picks: readonly number[]): KlondikeState[] {
+function playoutTrace(seed: number, config: KlondikeConfig, picks: readonly number[]): KlondikeState[] {
   let state = initialState(seed, config)
   const trace = [state]
   for (const pick of picks) {
@@ -43,7 +43,7 @@ function isRed(suit: Suit): boolean {
 test('card conservation: every reachable state contains exactly the 52 unique cards', () => {
   fc.assert(
     fc.property(arbSeed, arbConfig, arbPicks, (seed, config, picks) => {
-      for (const state of playout(seed, config, picks)) {
+      for (const state of playoutTrace(seed, config, picks)) {
         const keys = allCardKeys(state)
         expect(keys).toHaveLength(52)
         expect(new Set(keys).size).toBe(52)
@@ -56,7 +56,7 @@ test('card conservation: every reachable state contains exactly the 52 unique ca
 test('tableau-run invariant: every reachable face-up section descends by one, alternating colors', () => {
   fc.assert(
     fc.property(arbSeed, arbConfig, arbPicks, (seed, config, picks) => {
-      for (const state of playout(seed, config, picks)) {
+      for (const state of playoutTrace(seed, config, picks)) {
         for (const pile of state.tableau) {
           if (pile.faceUp.length === 0) expect(pile.faceDown).toHaveLength(0)
           for (let i = 1; i < pile.faceUp.length; i++) {
@@ -75,8 +75,8 @@ test('tableau-run invariant: every reachable face-up section descends by one, al
 test('determinism: same seed and same action sequence produce the identical state', () => {
   fc.assert(
     fc.property(arbSeed, arbConfig, arbPicks, (seed, config, picks) => {
-      const a = playout(seed, config, picks)
-      const b = playout(seed, config, picks)
+      const a = playoutTrace(seed, config, picks)
+      const b = playoutTrace(seed, config, picks)
       expect(a[a.length - 1]).toEqual(b[b.length - 1])
     }),
     { numRuns: 30 },
@@ -157,7 +157,7 @@ function sortedActionKeys(actions: readonly KlondikeAction[]): string[] {
 test('oracle equivalence: legalActions returns exactly what brute-force advance accepts', () => {
   fc.assert(
     fc.property(arbSeed, arbConfig, arbPicks, (seed, config, picks) => {
-      const trace = playout(seed, config, picks)
+      const trace = playoutTrace(seed, config, picks)
       // Check a bounded sample of the trace to keep the run fast: the
       // opening states, every fifth state through the tangled middle game,
       // and the final position.

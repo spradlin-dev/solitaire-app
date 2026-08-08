@@ -22,9 +22,10 @@ export interface SolverOptions {
   readonly prune?: boolean
 }
 
-// Placeholder budgets pending real measurement in the worker phase: the
-// visited set holds full key strings, so its cap is also the memory cap —
-// a phone's worker dies of memory long before a desktop would.
+// Shipped unmeasured: the visited set holds full key strings, so its cap
+// is also the memory cap (~100-200MB at this size), and a phone's worker
+// dies of memory long before a desktop would. Revisit with real device
+// measurements — or on the first OOM report.
 const DEFAULT_MAX_NODES = 1_000_000
 const DEFAULT_MAX_VISITED = 500_000
 

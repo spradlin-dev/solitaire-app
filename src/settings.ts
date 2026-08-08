@@ -1,3 +1,5 @@
+import { isDrawCount } from './engine/klondike.ts'
+import type { DrawCount } from './engine/klondike.ts'
 import type { StorageLike } from './storage.ts'
 
 // The draw-mode preference. It applies to the NEXT new deal only — a game
@@ -7,7 +9,7 @@ import type { StorageLike } from './storage.ts'
 export const SETTINGS_KEY = 'solitaire:settings'
 
 export interface Settings {
-  readonly drawCount: 1 | 3
+  readonly drawCount: DrawCount
 }
 
 // New games default to Draw 3 (DESIGN.md section 2).
@@ -29,7 +31,7 @@ export function loadSettings(storage: StorageLike): Settings {
   }
   if (typeof parsed !== 'object' || parsed === null) return DEFAULTS
   const drawCount = (parsed as Record<string, unknown>).drawCount
-  return drawCount === 1 || drawCount === 3 ? { drawCount } : DEFAULTS
+  return isDrawCount(drawCount) ? { drawCount } : DEFAULTS
 }
 
 export function saveSettings(storage: StorageLike, settings: Settings): void {

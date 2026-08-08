@@ -2,8 +2,17 @@ import { RANKS, SUITS } from './cards.ts'
 import type { Card, Rank, Suit } from './cards.ts'
 import { newDeck, shuffle } from './deck.ts'
 
+// The draw-mode domain, owned here: every other layer (settings, saves,
+// deal links, the UI select) validates against this one predicate rather
+// than re-deriving the set.
+export type DrawCount = 1 | 3
+
+export function isDrawCount(value: unknown): value is DrawCount {
+  return value === 1 || value === 3
+}
+
 export interface KlondikeConfig {
-  readonly drawCount: 1 | 3
+  readonly drawCount: DrawCount
 }
 
 export interface TableauPile {
@@ -37,6 +46,7 @@ export type RejectReason =
   | 'draw-stock-empty'
   | 'recycle-stock-not-empty'
   | 'recycle-waste-empty'
+  | 'invalid-action'
   | 'invalid-zone'
   | 'invalid-count'
   | 'no-such-card'
@@ -60,12 +70,26 @@ export function isRed(suit: Suit): boolean {
   return suit === 'diamonds' || suit === 'hearts'
 }
 
+// One rank lower, opposite color — THE tableau stacking rule. Every
+// consumer (move legality, run validation, the loss prover's tenant
+// check) must use this predicate, not a copy: the prover's
+// no-false-positives guarantee depends on exact agreement.
+export function stacksOn(card: Card, onto: Card): boolean {
+  return rankIndex(card.rank) === rankIndex(onto.rank) - 1 && isRed(card.suit) !== isRed(onto.suit)
+}
+
+// A pile with nothing face-up or face-down: the only seat a King's run
+// can claim, and the "open column" the loss prover counts.
+export function isEmptyPile(pile: TableauPile): boolean {
+  return pile.faceUp.length === 0 && pile.faceDown.length === 0
+}
+
 function fitsTableau(pile: TableauPile, card: Card): boolean {
   if (pile.faceUp.length === 0) {
     return pile.faceDown.length === 0 && card.rank === 'K'
   }
   const top = pile.faceUp[pile.faceUp.length - 1]
-  return rankIndex(card.rank) === rankIndex(top.rank) - 1 && isRed(card.suit) !== isRed(top.suit)
+  return stacksOn(card, top)
 }
 
 export function fitsFoundation(pile: readonly Card[], suit: Suit, card: Card): boolean {
@@ -120,11 +144,7 @@ function validZone(zone: Zone): boolean {
 
 function isValidRun(cards: readonly Card[]): boolean {
   for (let i = 1; i < cards.length; i++) {
-    const upper = cards[i - 1]
-    const lower = cards[i]
-    if (rankIndex(lower.rank) !== rankIndex(upper.rank) - 1 || isRed(lower.suit) === isRed(upper.suit)) {
-      return false
-    }
+    if (!stacksOn(cards[i], cards[i - 1])) return false
   }
   return true
 }
@@ -213,11 +233,13 @@ function applyMove(state: KlondikeState, from: Zone, to: Zone, count: number): A
 // rejects rather than throws. Every successful action of any type counts
 // as one move.
 export function advance(state: KlondikeState, action: KlondikeAction): AdvanceResult {
-  if (typeof action !== 'object' || action === null) return { ok: false, reason: 'invalid-zone' }
+  if (typeof action !== 'object' || action === null) return { ok: false, reason: 'invalid-action' }
   if (action.type === 'draw') return applyDraw(state)
   if (action.type === 'recycle') return applyRecycle(state)
   if (action.type === 'move') return applyMove(state, action.from, action.to, action.count)
-  return { ok: false, reason: 'invalid-zone' }
+  // An unknown action TYPE is not a zone problem: the reason must point a
+  // corrupted-save debugger at the right field.
+  return { ok: false, reason: 'invalid-action' }
 }
 
 // Every legal tableau target for `card`, canonicalizing empty columns to the
@@ -228,7 +250,7 @@ function tableauTargets(state: KlondikeState, card: Card, exclude: number | null
   for (let index = 0; index < 7; index++) {
     if (index === exclude) continue
     const pile = state.tableau[index]
-    const isEmpty = pile.faceUp.length === 0 && pile.faceDown.length === 0
+    const isEmpty = isEmptyPile(pile)
     if (isEmpty && emptyUsed) continue
     if (fitsTableau(pile, card)) {
       targets.push(index)

@@ -358,16 +358,18 @@ test('every successful action of any type counts as one move', () => {
 
 test('advance is total: garbage from a corrupted log rejects instead of throwing', () => {
   const state = initialState(42, { drawCount: 3 })
-  const garbage = [
-    { type: 'flip' },
-    { type: 'move', from: { kind: 'stock' }, to: { kind: 'tableau', index: 0 }, count: 1 },
-    { type: 'move', from: { kind: 'foundation', suit: 'wands' }, to: { kind: 'tableau', index: 0 }, count: 1 },
-    { type: 'move', from: { kind: 'waste' }, to: { kind: 'foundation', suit: 'wands' }, count: 1 },
-    { type: 'move', from: undefined, to: { kind: 'tableau', index: 0 }, count: 1 },
-    null,
-  ] as unknown as KlondikeAction[]
-  for (const action of garbage) {
-    expect(advance(state, action)).toEqual({ ok: false, reason: 'invalid-zone' })
+  // A broken action TYPE and a broken ZONE report different reasons, so
+  // a corrupted-save debugger looks at the right field.
+  const garbage: [unknown, string][] = [
+    [{ type: 'flip' }, 'invalid-action'],
+    [null, 'invalid-action'],
+    [{ type: 'move', from: { kind: 'stock' }, to: { kind: 'tableau', index: 0 }, count: 1 }, 'invalid-zone'],
+    [{ type: 'move', from: { kind: 'foundation', suit: 'wands' }, to: { kind: 'tableau', index: 0 }, count: 1 }, 'invalid-zone'],
+    [{ type: 'move', from: { kind: 'waste' }, to: { kind: 'foundation', suit: 'wands' }, count: 1 }, 'invalid-zone'],
+    [{ type: 'move', from: undefined, to: { kind: 'tableau', index: 0 }, count: 1 }, 'invalid-zone'],
+  ]
+  for (const [action, reason] of garbage) {
+    expect(advance(state, action as KlondikeAction)).toEqual({ ok: false, reason })
   }
 })
 

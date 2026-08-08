@@ -61,6 +61,36 @@ test('fractional win times are rounded before comparison', () => {
   expect(loadStats(storage).draw1.bestTimeMs).toBe(1001)
 })
 
+test('a storage that throws on read loads as empty and records without crashing', () => {
+  const throwing: StorageLike = {
+    getItem: () => {
+      throw new Error('blocked')
+    },
+    setItem: () => {
+      throw new Error('blocked')
+    },
+    removeItem: () => {},
+  }
+  expect(loadStats(throwing)).toEqual({ draw1: emptyModeStats(), draw3: emptyModeStats() })
+  // The winning move records through this path: it must survive too.
+  const updated = recordDealEnd(throwing, win(3, 30_000, 90))
+  expect(updated.draw3.wins).toBe(1)
+})
+
+test('a partially damaged stats blob keeps its healthy fields', () => {
+  const storage = fakeStorage()
+  storage.setItem(
+    STATS_KEY,
+    JSON.stringify({
+      draw1: { ...emptyModeStats(), wins: 7, bestStreak: 'corrupt' },
+      draw3: emptyModeStats(),
+    }),
+  )
+  const loaded = loadStats(storage)
+  expect(loaded.draw1.wins).toBe(7)
+  expect(loaded.draw1.bestStreak).toBe(0)
+})
+
 test('a storage that throws on write still returns the updated stats without throwing', () => {
   const throwing: StorageLike = {
     getItem: () => null,

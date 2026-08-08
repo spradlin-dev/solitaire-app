@@ -123,7 +123,7 @@ button:disabled {
 
 /* On short (landscape) screens the tableau starts at the very top, so
    banners anchor to the bottom instead of covering every column's first
-   card. */
+   card. Approximates layout.ts's SIDE_RAIL_HEIGHT — retune together. */
 @media (max-height: 520px) {
   .banner-stack {
     top: auto;

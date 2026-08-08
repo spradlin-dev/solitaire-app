@@ -1,4 +1,4 @@
-import { advance, fitsFoundation, isRed, isWon, legalActions, rankIndex } from './klondike.ts'
+import { advance, fitsFoundation, isEmptyPile, isWon, legalActions, stacksOn } from './klondike.ts'
 import type { KlondikeAction, KlondikeState } from './klondike.ts'
 import { SUITS, cardKey } from './cards.ts'
 import type { Card } from './cards.ts'
@@ -114,8 +114,9 @@ export function isLossDeclarable(state: KlondikeState, actionLog: readonly Klond
 // its chain blocks the loss declaration by itself.
 function pullIsUseful(state: KlondikeState, card: Card): boolean {
   if (card.rank === 'A' || card.rank === '2') return false
-  const tenant = (candidate: Card) =>
-    rankIndex(candidate.rank) === rankIndex(card.rank) - 1 && isRed(candidate.suit) !== isRed(card.suit)
+  // The engine's own stacking rule, NOT a local copy: no-false-positives
+  // depends on this agreeing exactly with move legality.
+  const tenant = (candidate: Card) => stacksOn(candidate, card)
   if (state.waste.length > 0 && tenant(state.waste[state.waste.length - 1])) return true
   for (const tableauPile of state.tableau) {
     for (let index = 0; index < tableauPile.faceUp.length; index++) {
@@ -149,10 +150,10 @@ function freeingAColumnHelps(state: KlondikeState): boolean {
   let settled = 0
   let empty = 0
   for (const pile of state.tableau) {
-    if (pile.faceUp.length === 0 && pile.faceDown.length === 0) empty += 1
+    if (isEmptyPile(pile)) empty += 1
     else if (pile.faceDown.length === 0 && pile.faceUp[0].rank === 'K') settled += 1
   }
-  return empty < 4 - settled
+  return empty < SUITS.length - settled
 }
 
 // A pointless move leaves the board functionally unchanged: a lone
@@ -179,7 +180,7 @@ export function isPointless(state: KlondikeState, move: MoveAction): boolean {
   }
   if (source.faceDown.length > 0) return false
   const target = state.tableau[move.to.index]
-  if (target.faceUp.length === 0 && target.faceDown.length === 0) return true
+  if (isEmptyPile(target)) return true
   // A whole pile onto a non-empty target frees its column — worthless
   // when the open columns already meet every King's possible need.
   return !freeingAColumnHelps(state)

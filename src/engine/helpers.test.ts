@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest'
 import fc from 'fast-check'
 import { autoFinishActions, autoFinishAvailable, hint, isLossDeclarable, isProvablyLost, tapAction } from './helpers.ts'
-import { advance, initialState, isWon, legalActions } from './klondike.ts'
+import { MAX_SEED, advance, initialState, isWon, legalActions } from './klondike.ts'
 import type { KlondikeAction, TableauPile } from './klondike.ts'
 import { RANKS } from './cards.ts'
 import type { Card } from './cards.ts'
@@ -261,7 +261,7 @@ test('hint returns null only when nothing at all is legal', () => {
 test('hint never returns an action the engine rejects', () => {
   fc.assert(
     fc.property(
-      fc.integer({ min: 0, max: 0xffffffff }),
+      fc.integer({ min: 0, max: MAX_SEED }),
       fc.constantFrom<1 | 3>(1, 3),
       fc.array(fc.nat(9999), { maxLength: 40 }),
       (seed, drawCount, picks) => {

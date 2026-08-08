@@ -1,11 +1,12 @@
 import { MAX_SEED } from './engine/klondike.ts'
+import type { DrawCount } from './engine/klondike.ts'
 
 // Shareable deal links (DESIGN.md section 5.3): the URL fragment carries
 // the seed and draw mode, never reaching the server or the service worker.
 
 export interface DealLink {
   readonly seed: number
-  readonly drawCount: 1 | 3
+  readonly drawCount: DrawCount
 }
 
 const FRAGMENT_PATTERN = /^#?deal=(\d{1,10})\.([13])$/

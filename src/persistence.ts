@@ -1,5 +1,6 @@
-import { MAX_SEED } from './engine/klondike.ts'
-import type { KlondikeAction, KlondikeConfig } from './engine/klondike.ts'
+import { MAX_SEED, isDrawCount } from './engine/klondike.ts'
+import type { DrawCount, KlondikeAction } from './engine/klondike.ts'
+import type { HydrateInput } from './store.ts'
 import type { StorageLike } from './storage.ts'
 
 // localStorage persistence for the in-progress game (DESIGN.md section 5.2).
@@ -17,17 +18,10 @@ export const ENGINE_VERSION = 1
 
 export const GAME_KEY = 'solitaire:game'
 
-export interface SavedGame {
-  readonly seed: number
-  readonly config: KlondikeConfig
-  readonly actionLog: readonly KlondikeAction[]
-  readonly elapsedMs: number
-  readonly played: boolean
-  readonly recorded: boolean
-  // Saves written before the solver existed lack this field; they load
-  // as not-resigned rather than being discarded.
-  readonly resigned: boolean
-}
+// The saved blob IS the store's hydrate input — one shape, one owner.
+// (The resigned field is absent in saves written before the solver;
+// they load as not-resigned rather than being discarded.)
+export type SavedGame = HydrateInput
 
 export function saveGame(storage: StorageLike, game: SavedGame): void {
   const blob = { schemaVersion: SCHEMA_VERSION, engineVersion: ENGINE_VERSION, ...game }
@@ -44,10 +38,6 @@ export function clearGame(storage: StorageLike): void {
   } catch (error) {
     console.warn('could not clear the saved game', error)
   }
-}
-
-function isValidDrawCount(value: unknown): value is 1 | 3 {
-  return value === 1 || value === 3
 }
 
 function isSeed(value: unknown): value is number {
@@ -82,7 +72,7 @@ export function loadGame(storage: StorageLike): SavedGame | null {
     isSeed(blob.seed) &&
     typeof config === 'object' &&
     config !== null &&
-    isValidDrawCount(config.drawCount) &&
+    isDrawCount(config.drawCount) &&
     Array.isArray(blob.actionLog) &&
     typeof blob.elapsedMs === 'number' &&
     Number.isFinite(blob.elapsedMs) &&
@@ -102,7 +92,7 @@ export function loadGame(storage: StorageLike): SavedGame | null {
   }
   return {
     seed: blob.seed as number,
-    config: { drawCount: config.drawCount as 1 | 3 },
+    config: { drawCount: config.drawCount as DrawCount },
     actionLog: blob.actionLog as KlondikeAction[],
     elapsedMs: blob.elapsedMs as number,
     played: blob.played as boolean,

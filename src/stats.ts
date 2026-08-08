@@ -41,21 +41,32 @@ function isCountOrNull(value: unknown): value is number | null {
   return value === null || isCount(value)
 }
 
-function isModeStats(value: unknown): value is ModeStats {
-  if (typeof value !== 'object' || value === null) return false
-  const stats = value as Record<string, unknown>
-  return (
-    isCount(stats.wins) &&
-    isCount(stats.losses) &&
-    isCount(stats.currentStreak) &&
-    isCount(stats.bestStreak) &&
-    isCountOrNull(stats.bestTimeMs) &&
-    isCountOrNull(stats.fewestMoves)
-  )
+// Per-field defaults instead of whole-blob rejection: a future field
+// added to ModeStats must not wipe every returning player's history, and
+// one damaged counter costs only itself.
+function readModeStats(value: unknown): ModeStats {
+  const stats = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>
+  return {
+    wins: isCount(stats.wins) ? stats.wins : 0,
+    losses: isCount(stats.losses) ? stats.losses : 0,
+    currentStreak: isCount(stats.currentStreak) ? stats.currentStreak : 0,
+    bestStreak: isCount(stats.bestStreak) ? stats.bestStreak : 0,
+    bestTimeMs: isCountOrNull(stats.bestTimeMs) ? stats.bestTimeMs : null,
+    fewestMoves: isCountOrNull(stats.fewestMoves) ? stats.fewestMoves : null,
+  }
 }
 
 export function loadStats(storage: StorageLike): Stats {
-  const raw = storage.getItem(STATS_KEY)
+  // Guarded like every other storage read in the app: a blocked
+  // localStorage must never crash the Stats view — or the winning move,
+  // which records through here.
+  let raw: string | null
+  try {
+    raw = storage.getItem(STATS_KEY)
+  } catch (error) {
+    console.warn('could not read stats', error)
+    return emptyStats()
+  }
   if (raw === null) return emptyStats()
   let parsed: unknown
   try {
@@ -65,8 +76,7 @@ export function loadStats(storage: StorageLike): Stats {
   }
   if (typeof parsed !== 'object' || parsed === null) return emptyStats()
   const stats = parsed as Record<string, unknown>
-  if (!isModeStats(stats.draw1) || !isModeStats(stats.draw3)) return emptyStats()
-  return { draw1: stats.draw1, draw3: stats.draw3 }
+  return { draw1: readModeStats(stats.draw1), draw3: readModeStats(stats.draw3) }
 }
 
 function applyResult(stats: ModeStats, result: DealResult): ModeStats {

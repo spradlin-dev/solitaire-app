@@ -1,7 +1,7 @@
 import { Application, Assets, Container, Graphics, Sprite, Text } from 'pixi.js'
 import type { FederatedPointerEvent, Texture } from 'pixi.js'
 import { cardAssetUrl } from '../cardAssets.ts'
-import { cardRect, computeLayout, dropTargetAt, pileCardY, wasteFanPos } from './layout.ts'
+import { CARD_RATIO, cardRect, computeLayout, dropTargetAt, pileCardY, wasteFanPos } from './layout.ts'
 import type { Point, Rect, TableLayout } from './layout.ts'
 import { newDeck } from '../engine/deck.ts'
 import { SUITS, cardKey } from '../engine/cards.ts'
@@ -73,7 +73,7 @@ interface CardPlace {
 
 function backTexture(app: Application): Texture {
   const w = 167 * 2
-  const h = Math.round(w * 1.452)
+  const h = Math.round(w * CARD_RATIO)
   const g = new Graphics()
   // Classic nested-pinstripe back: unmistakably not a face, and immune to
   // the overdraw artifacts a free-hand lattice showed in review.

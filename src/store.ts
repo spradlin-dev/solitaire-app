@@ -27,6 +27,9 @@ export interface GameSnapshot {
   readonly elapsedMs: number
 }
 
+// The one canonical saved-game shape: persistence re-exports this as
+// SavedGame, so a field added here is a field everywhere — the two
+// interfaces can no longer drift apart by hand.
 export interface HydrateInput {
   readonly seed: number
   readonly config: KlondikeConfig
@@ -242,7 +245,11 @@ export function createGameStore(options: GameStoreOptions = {}): GameStore {
         seed: saved.seed,
         actionLog: [...saved.actionLog],
         states,
-        played: saved.played,
+        // Reconciled like recorded/resigned below: a log with moves IS a
+        // played deal, whatever the flag claims — recordIfDealEnds gates
+        // on this, so trusting a malformed input would silently suppress
+        // the deal's one record.
+        played: saved.played || saved.actionLog.length > 0,
         // Reconciled with the replayed position: a corrupted save must not
         // resurrect an already-won game as unrecorded, or its win would be
         // mis-recorded as a loss when the next deal starts.

@@ -14,7 +14,8 @@ import { chooseBoot } from './boot.ts'
 import { formatDealFragment } from './dealLink.ts'
 import { scheduleSwUpdateChecks } from './pwaUpdate.ts'
 import { positionKey } from './engine/solver.ts'
-import type { KlondikeAction } from './engine/klondike.ts'
+import { isDrawCount } from './engine/klondike.ts'
+import type { DrawCount, KlondikeAction } from './engine/klondike.ts'
 import type { SolverWorkerReply } from './solverWorker.ts'
 
 // The module-level bootstrap below runs once per page; a hot update would
@@ -193,10 +194,11 @@ export default function App() {
     setFinishing(false)
   }
 
-  const newGame = (drawCount: 1 | 3) => {
+  const newGame = (drawCount: DrawCount) => {
     stopFinishing()
     stopSolving()
     setLost(false)
+    setClock(0)
     store.start(randomSeed(), { drawCount })
   }
 
@@ -223,13 +225,19 @@ export default function App() {
 
   const onRestart = () => {
     stopFinishing()
+    stopSolving()
     setLost(false)
+    setClock(0)
     store.restart()
   }
 
   // The shared timed-apply loop: auto-finish and solver playback both run
   // through it (input latch, generation counter, one action per beat).
   const playActions = (actions: readonly KlondikeAction[]) => {
+    // The menu must not sit over scripted play: the toolbar stays live
+    // beneath it, and a menu action landing mid-script (the audit's
+    // resign-during-auto-finish find) is exactly the trap.
+    setMenuOpen(false)
     const run = ++finishRun.current
     finishingRef.current = true
     setFinishing(true)
@@ -315,14 +323,16 @@ export default function App() {
     )
   }
 
-  const setDrawMode = (drawCount: 1 | 3) => {
+  const setDrawMode = (drawCount: DrawCount) => {
     setSettings({ drawCount })
     saveSettings(storage, { drawCount })
   }
 
   const canFinish = !snapshot.won && !finishing && autoFinishAvailable(snapshot.state)
-  // The recorded latch flips exactly when a deal ends, so it is the
-  // narrowest refresh trigger for an open stats view.
+  // Refresh trigger for an open stats view. The recorded latch flips in
+  // place for wins and resignations; the abandon-by-new-deal loss never
+  // publishes that transition, but every abandon path also closes the
+  // menu, and the menu deps below recompute the memo anyway.
   const dealEnded = snapshot.recorded
   const stats = useMemo(() => {
     void dealEnded
@@ -436,7 +446,7 @@ export default function App() {
                   <button onClick={onShare}>Share deal</button>
                   <button onClick={() => setMenuView('stats')}>Stats</button>
                   {typeof Worker !== 'undefined' && (
-                    <button onClick={onSolve} disabled={snapshot.won || solving}>
+                    <button onClick={onSolve} disabled={snapshot.won || solving || finishing}>
                       Solve
                     </button>
                   )}
@@ -444,7 +454,10 @@ export default function App() {
                     Next deal:
                     <select
                       value={settings.drawCount}
-                      onChange={(event) => setDrawMode(Number(event.target.value) === 1 ? 1 : 3)}
+                      onChange={(event) => {
+                        const value = Number(event.target.value)
+                        setDrawMode(isDrawCount(value) ? value : 3)
+                      }}
                     >
                       <option value={3}>Draw 3</option>
                       <option value={1}>Draw 1</option>

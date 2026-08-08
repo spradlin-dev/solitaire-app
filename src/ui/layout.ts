@@ -23,6 +23,8 @@ const BUDGET_SHORT_HEIGHT = 400
 // moves to side rails (stock/waste left, foundations in a 2x2 block
 // right) so the tableau gets the full height. The rail layout is used
 // only when it actually yields bigger cards than the top-row layout.
+// index.css's banner-anchoring media query approximates this same
+// threshold — retune them together.
 export const SIDE_RAIL_HEIGHT = 520
 // Side-rail spacing, in card units: rail-to-tableau gap (widths), the
 // vertical gap between rail cards (heights), and the waste's downward
@@ -219,7 +221,7 @@ export function wasteFanPos(layout: TableLayout, index: number, wasteLength: num
 
 // The column's card counts, passed as one unit so they can never be
 // transposed with each other or the pile index (all are numbers).
-export interface PileCounts {
+interface PileCounts {
   readonly faceDown: number
   readonly faceUp: number
 }
@@ -271,7 +273,7 @@ export function inRect(point: Point, rect: Rect): boolean {
 // Drop resolution: a point over a foundation rect targets that foundation;
 // otherwise a point inside a column's x-band below tableauDropTop targets
 // that column. Returns null when the point is over nothing droppable.
-export type DropTarget = { readonly kind: 'foundation'; readonly suit: Suit } | { readonly kind: 'tableau'; readonly index: number }
+type DropTarget = { readonly kind: 'foundation'; readonly suit: Suit } | { readonly kind: 'tableau'; readonly index: number }
 
 export function dropTargetAt(layout: TableLayout, point: Point): DropTarget | null {
   for (const suit of SUITS) {

@@ -1,21 +1,14 @@
 import { expect, test } from 'vitest'
 import fc from 'fast-check'
 import { positionKey, solve, tightenLine } from './solver.ts'
-import { advance, initialState, isWon, legalActions } from './klondike.ts'
+import { initialState, isWon } from './klondike.ts'
 import type { KlondikeAction } from './klondike.ts'
 import { isProvablyLost } from './helpers.ts'
 import { cards } from './testCards.ts'
-import { EMPTY_PILE, makeState, nearWinDeal, pile, replay, suitPrefix } from './testState.ts'
+import { EMPTY_PILE, fullFoundations, makeState, nearWinDeal, pile, playout, replay, suitPrefix } from './testState.ts'
 
 test('a won position solves to an empty line', () => {
-  const won = makeState({
-    foundations: {
-      clubs: suitPrefix('clubs', 13),
-      diamonds: suitPrefix('diamonds', 13),
-      hearts: suitPrefix('hearts', 13),
-      spades: suitPrefix('spades', 13),
-    },
-  })
+  const won = makeState({ foundations: fullFoundations() })
   expect(solve(won)).toEqual({ outcome: 'won', line: [] })
 })
 
@@ -149,14 +142,7 @@ test(
           // positions are where both searches can actually complete, so
           // the comparison has teeth instead of returning
           // undecided/undecided.
-          let state = initialState(seed, { drawCount })
-          for (const pick of picks) {
-            const actions = legalActions(state)
-            if (actions.length === 0) break
-            const result = advance(state, actions[pick % actions.length])
-            if (!result.ok) throw new Error('legal action rejected')
-            state = result.state
-          }
+          const state = playout(initialState(seed, { drawCount }), picks)
           const pruned = solve(state, { maxNodes: 12_000, maxVisited: 12_000, prune: true })
           // The unpruned tree is a strict superset, so an equal budget
           // would systematically skip exactly the over-pruning
@@ -190,12 +176,7 @@ test('tightenLine splices out a there-and-back detour without changing the outco
   // tightening must remove it entirely.
   const kingHome = makeState({
     waste: cards('Q:spades'),
-    foundations: {
-      clubs: suitPrefix('clubs', 13),
-      diamonds: suitPrefix('diamonds', 13),
-      hearts: suitPrefix('hearts', 13),
-      spades: suitPrefix('spades', 11),
-    },
+    foundations: { ...fullFoundations(), spades: suitPrefix('spades', 11) },
     tableau: [
       pile([], cards('K:spades')),
       EMPTY_PILE,

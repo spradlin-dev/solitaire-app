@@ -11,10 +11,6 @@ export interface Card {
   readonly suit: Suit
 }
 
-export function sameCard(a: Card, b: Card): boolean {
-  return a.rank === b.rank && a.suit === b.suit
-}
-
 export function cardKey(card: Card): string {
   return `${card.rank}:${card.suit}`
 }

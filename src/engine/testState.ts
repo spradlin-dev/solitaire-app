@@ -1,4 +1,4 @@
-import { advance } from './klondike.ts'
+import { advance, legalActions } from './klondike.ts'
 import type { KlondikeAction, KlondikeState, TableauPile } from './klondike.ts'
 import { RANKS } from './cards.ts'
 import type { Card, Suit } from './cards.ts'
@@ -44,16 +44,35 @@ export function replay(state: KlondikeState, actions: readonly KlondikeAction[])
   return current
 }
 
+// All four suits complete — the won position, and the base for near-win
+// fixtures that peel cards back off.
+export function fullFoundations(): Record<Suit, Card[]> {
+  return {
+    clubs: suitPrefix('clubs', 13),
+    diamonds: suitPrefix('diamonds', 13),
+    hearts: suitPrefix('hearts', 13),
+    spades: suitPrefix('spades', 13),
+  }
+}
+
+// Random-legal-playout driver: each pick indexes into the legal actions
+// mod their count. For plain drive-to-a-position use; tests needing the
+// full trace or per-step assertions keep their own loops deliberately.
+export function playout(state: KlondikeState, picks: readonly number[]): KlondikeState {
+  let current = state
+  for (const pick of picks) {
+    const actions = legalActions(current)
+    if (actions.length === 0) break
+    current = mustAdvance(current, actions[pick % actions.length])
+  }
+  return current
+}
+
 // One move from victory: the King of spades waits on the waste.
 export function nearWinDeal(): KlondikeState {
   return makeState({
     waste: cards('K:spades'),
-    foundations: {
-      clubs: suitPrefix('clubs', 13),
-      diamonds: suitPrefix('diamonds', 13),
-      hearts: suitPrefix('hearts', 13),
-      spades: suitPrefix('spades', 12),
-    },
+    foundations: { ...fullFoundations(), spades: suitPrefix('spades', 12) },
   })
 }
 
