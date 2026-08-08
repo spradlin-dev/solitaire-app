@@ -19,6 +19,8 @@ Free Klondike solitaire that runs in your browser — no ads, no account, no tra
 - Draw 1 or Draw 3
 - Unlimited undo, hints, and auto-finish
 - Hints can prove a deal unwinnable, so you know when to stop
+- A Solve button that finds a winning line and plays it out for you
+  (using it counts the deal as a loss, not a win)
 - Timer and move counter, with a pause menu that stops the clock
 - Win/loss stats, streaks, best times
 - Share any deal as a link so a friend can try the same one
