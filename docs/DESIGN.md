@@ -166,7 +166,8 @@ read state and emit primitive engine actions.
   is made; the flag is set then and never cleared (not derived from move count, so
   undoing everything can't erase it). **Each played deal produces exactly one record,
   written when the deal ends:** a win when `isWon` becomes true, a loss when a new deal
-  is started first. A proven loss shows the message but does not lock the game or write
+  is started first, or a loss at resignation (the Solve button, section 12) — the one
+  trigger that fires mid-deal. A proven loss shows the message but does not lock the game or write
   a record — the player may undo out of the dead end and still win.
   Restarting the same deal (a toolbar action) replays its seed from move zero with a
   fresh clock (armed again only by fresh intent; section 5.3) and move count: no
@@ -343,7 +344,9 @@ card game appears or an engine change must land in both repos.
 
 - Other solitaire variants (the config-driven engine leaves the door open).
 - Point/Vegas scoring (stats only).
-- Solver, winnable-only deals, or perfect loss detection beyond section 4.
+- Winnable-only deals (more feasible with the section 12 solver, though
+  solver-winnable assumes perfect information — a human-fairness bar would
+  need more; still backlog).
 - Multiplayer, accounts, server anything.
 - Sound, elaborate animations beyond auto-finish/card movement, daily challenges,
   localization, stats export/import (backlog: cheap and worth doing soon after v1).
@@ -353,8 +356,113 @@ card game appears or an engine change must land in both repos.
 None. The last two (auto-finish trigger, seed sharing) were decided on 2026-08-02 and
 folded into sections 2, 5.3, and 8.
 
+## 12. Solver
+
+- A Solve button hands the current position to the solver and, when a win
+  exists, plays it out on the table. Finding and showing are decoupled: the
+  search runs at machine speed in a Web Worker (the engine is pure TS with
+  no DOM and plain-data state, so it moves in unchanged; the full position
+  crosses the boundary by structured clone — never seed+log, which would
+  diverge on injected test states), then the win animates at watchable
+  speed afterwards.
+- Algorithm: depth-first search with backtracking over `legalActions`, plus
+  three additions:
+  1. **A visited-position set.** Draw/recycle and shuttle loops make the
+     raw game a graph, not a tree; a position already seen is a dead end.
+     The position key is the state minus `moves` and `config`: stock order,
+     waste order, foundation heights, each pile's face-up cards in order,
+     and each pile's face-down count (within one deal a pile's face-down
+     portion is always a dealt prefix, so the count recovers the
+     identities). Excluding `moves` is sound because `advance` never reads
+     it. Section 4's `stockWasteKey` is NOT reusable here — it is sound
+     only inside the frozen-tableau sterile-cycle check.
+  2. **Pruning by the pointless-move exclusions**, consumed as one shared
+     exported `isPointless(state, move)` filter — the same implementation
+     the hint and loss detector use, defined only on states satisfying the
+     tableau-run invariant. Honesty about the proof: section 4's arguments
+     were written for loss detection, where a pointless move is deferred;
+     search pruning omits the move from a whole subtree, which needs the
+     stronger claim that from every position, some win survives with no
+     pruned move. The King shuttle is a column-permutation no-op; the
+     matching-parent hop holds because same-rank-same-color parents accept
+     identical cards, leaving foundation play of the buried one as the only
+     difference, which the rule checks; column-freeing holds because open
+     columns plus settled Kings never decreases, so "enough columns" is
+     forever. The foundation-pull deferral is the subtle case. The
+     differential test below is what actually holds the set up.
+  3. **Move ordering** — foundation moves and face-down flips first, with
+     `legalActions`' stable emission order as the total tie-break, so
+     wins are found early and verdicts are reproducible.
+- The search stops at the first win found. True shortest-win search is
+  exponentially more expensive; instead the found line gets a cleanup pass
+  defined by the position key: replay the line, and when a key repeats,
+  splice out the actions between the repeats. The spliced line reaches an
+  identical position, so it cannot change the outcome.
+- **Budgets are node-count and visited-entry caps only — never wall-clock**
+  — so a given position always yields the same verdict and the same line.
+  `unwinnable` is returned only when the search exhausts with no budget
+  event of any kind: the visited set never answers "visited" for a
+  position it did not store, there is no depth cap, and any cap hit
+  anywhere makes the whole result `undecided`. Outcomes: `won` (with the
+  line), `unwinnable` (a proof — wider than section 4's declarable loss
+  when the search completes, resting on the same exclusions), `undecided`
+  (budget hit; reported honestly, never spun as a loss). Expectation:
+  full deals mostly resolve `won` or `undecided`; complete `unwinnable`
+  proofs are realistic for endgames and near-sterile positions.
+- **The solver sees face-down cards** (they are in the state). That is the
+  cheat that makes it tractable — known cards mean one deterministic game
+  tree instead of a search over every hidden arrangement — so `unwinnable`
+  means unwinnable even with perfect information, and playback may use
+  knowledge the player lacks. Stale results are discarded: each request is
+  stamped with its position key and a result whose stamp no longer matches
+  the live game is dropped; starting a new search cancels the old worker.
+  If workers are unavailable, the Solve button hides.
+- **Playback**: the timed-apply loop (input latch, generation counter, one
+  action per beat) is extracted from the auto-finish handler and shared —
+  auto-finish itself, its trigger, and its safety argument are untouched.
+  A new Stop control cancels mid-line; cancelling stops future moves and
+  reverts nothing — the applied prefix stays on the log, undoable as
+  usual. Machine moves arm the clock like any move; the deal is already
+  resigned, so the running clock costs nothing.
+- **Stats: pressing Solve resigns the deal** via a new store operation
+  that marks it played and recorded and writes one loss atomically —
+  so a deal solved from move zero still records a loss, and the win at
+  the end of playback cannot double-record (the sticky latch already
+  guarantees this). Resigning is irreversible: undoing the machine's
+  line does not un-resign, and a later hand-played win of the resigned
+  deal records nothing. A sticky `resigned` flag rides the snapshot and
+  the save blob (schema bump), and while it is set the win overlay and
+  fireworks are replaced by a quiet "solved" notice — after reload too,
+  and also if the player undoes and re-finishes by hand. A solver
+  `unwinnable` shows the game-over banner immediately: asking the machine
+  waives section 5.3's one-fruitless-cycle etiquette.
+- Tests (section 8 additions): winnable fixtures return `won` with lines
+  that replay through `advance` to `isWon`; unwinnable fixtures are
+  POSITIONS, not seeds — crafted `testCards` endgames plus positions
+  section 4 already proves lost (sound oracles: section-4-lost is a
+  subset of unwinnable). The **differential test** — the solver with
+  pruning on vs. off must agree on every verdict over exhaustively
+  searchable positions — is the test that enforces the pruning-safety
+  claim; one-sided `unwinnable` assertions cannot catch over-pruning.
+  Cleanup splicing preserves outcomes by construction (key-identical
+  endpoints). Budget verdicts are reproducible. `undecided` never renders
+  as a loss anywhere in the UI. CI: the deploy smoke check gains an
+  assertion that the worker chunk appears in the service worker precache —
+  offline is a headline promise, and Solve must not be the one feature
+  that dies in airplane mode.
+
 ## Review log
 
+- 2026-08-08: section 12 (Solver) reviewed adversarially by qwen (local), fable, opus,
+  and sonnet (fresh-context agents); all four sets of findings folded. Headline fixes:
+  the position key defined (excluding the move counter, whose inclusion would have
+  silently disabled cycle detection); `unwinnable` restricted to budget-event-free
+  exhaustion (a capped visited set could otherwise fabricate proofs); resignation
+  became an atomic store operation marking played+recorded (the drafted rule would
+  have recorded a WIN on a move-zero solve); the pruning-safety claim restated
+  honestly with a differential pruning-on/off test as its enforcement; the sticky
+  persisted `resigned` flag; stale-result stamping; the worker-chunk precache CI
+  assertion.
 - 2026-08-02: DRAFT v1 reviewed adversarially by qwen (local), fable, opus, and sonnet
   (independent fresh-context agents). 19 distinct confirmed findings folded into v2;
   headline fixes: loss detection redesigned as on-demand simulation (v1's flag could
