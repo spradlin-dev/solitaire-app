@@ -6,9 +6,9 @@ import type { Card } from './cards.ts'
 // Assist logic built on top of the engine, never inside it: helpers only
 // read state and emit primitive engine actions (DESIGN.md section 5.1).
 
-type MoveAction = Extract<KlondikeAction, { type: 'move' }>
+export type MoveAction = Extract<KlondikeAction, { type: 'move' }>
 
-function isMove(action: KlondikeAction): action is MoveAction {
+export function isMove(action: KlondikeAction): action is MoveAction {
   return action.type === 'move'
 }
 
@@ -161,9 +161,10 @@ function freeingAColumnHelps(state: KlondikeState): boolean {
 // matching parents by the fit rule — when the card it would expose cannot
 // go to its foundation; a whole pile moved to free a column no King can
 // ever use again; or a foundation pull whose tenant chain grounds in no
-// real card (pullIsUseful above). Anything deeper than these checks is
-// solver territory (DESIGN.md section 10).
-function isPointless(state: KlondikeState, move: MoveAction): boolean {
+// real card (pullIsUseful above). The one shared filter consumed by the
+// hint, the loss detector, and the solver's pruning (DESIGN.md section
+// 12) — defined only on states satisfying the tableau-run invariant.
+export function isPointless(state: KlondikeState, move: MoveAction): boolean {
   if (move.from.kind === 'foundation') {
     const pile = state.foundations[move.from.suit]
     const card = pile[pile.length - 1]
